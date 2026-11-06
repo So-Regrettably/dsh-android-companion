@@ -1,0 +1,22 @@
+# 凭据与本地配置
+*.local
+.env
+.env.*
+cordis.patch.yml
+*.key
+*.pem
+*_rsa
+id_ed25519*
+
+# 运行时产物
+*.log
+*.tmp
+__pycache__/
+*.pyc
+node_modules/
+.DS_Store
+
+# 备份与快照
+backups/
+*.tar.gz
+*.zst

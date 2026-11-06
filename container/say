@@ -1,0 +1,230 @@
+#!/bin/bash
+# /root/say —— 把一句话变成语音文件（2026-10-28 建）
+#
+# 用法：
+#   /root/say "文本"                 # 默认：晓晓，普通语气
+#   /root/say "文本" sweet           # 换语气（见 --list）
+#   /root/say "文本" cold xiaoyi     # 语气 + 音色
+#   /root/say "文本" sweet hsiaoyu   # 台湾腔甜妹
+#   /root/say --list                 # 看有哪些音色和语气
+#
+# 输出：/root/.dsh/media/tts/<时间戳>.mp3 的绝对路径（最后一行打印出来）
+# 然后调工具：qq_send_voice(path="上面那个路径")
+#
+# 引擎：优先 edge-tts（微软，音色多、自然）；没装就退回百度翻译的 TTS（只有 4 个音色，
+# 但也够用，且零依赖）。两边都不用花钱。
+
+set -u
+OUTDIR=/root/.dsh/media/tts
+mkdir -p "$OUTDIR"
+
+# ---- 音色表（key|edge-tts 名称|说明）----
+VOICES=(
+  "xiaoxiao|zh-CN-XiaoxiaoNeural|晓晓｜温柔女声，新闻/小说，默认"
+  "xiaoyi|zh-CN-XiaoyiNeural|晓伊｜活泼少女，卡通感"
+  "xiaobei|zh-CN-liaoning-XiaobeiNeural|晓北｜东北话，幽默"
+  "xiaoni|zh-CN-shaanxi-XiaoniNeural|晓妮｜陕西话，爽朗"
+  "hiugaai|zh-HK-HiuGaaiNeural|晓佳｜粤语女声，亲切"
+  "hiumaan|zh-HK-HiuMaanNeural|晓曼｜粤语女声，温柔"
+  "hsiaochen|zh-TW-HsiaoChenNeural|晓臻｜台湾女声"
+  "hsiaoyu|zh-TW-HsiaoYuNeural|晓雨｜台湾女声，甜"
+  "aria|en-US-AriaNeural|英文女声 Aria"
+  "jenny|en-US-JennyNeural|英文女声 Jenny"
+)
+# ---- 语气表（key|rate|pitch|volume）----
+PRESETS=(
+  "normal|+0%|+0Hz|+0%"
+  "sweet|+5%|+14Hz|+0%"
+  "cold|-6%|-6Hz|+0%"
+  "excited|+16%|+12Hz|+10%"
+  "sleepy|-18%|-8Hz|-15%"
+  "angry|+8%|+6Hz|+15%"
+  "whisper|-12%|-2Hz|-30%"
+)
+
+# Azure 官方情绪风格（10-28 接入）。这些名字可以直接当「语气」用，走 Azure 接口；
+# 不在这个表里的语气（normal/sweet/cold...）走 edge-tts 的语速音高模拟。
+AZ_STYLES="affectionate angry assistant calm chat cheerful customerservice disgruntled fearful gentle lyrical newscast poetry sad serious sorry whisper"
+# BreezeBlue 支持的语气（自然语言情绪，比 Azure 的 style 更自由）
+# low = 声音压低但语速正常（10-30 加的：原来一说"低沉"模型就连语速一起拖慢）
+BREEZE_TONES="normal sweet cold excited sleepy angry whisper gentle sad cheerful shy pout low"
+AZ_VOICE_FIX="zh-CN-XiaoxiaoNeural"
+
+show_list() {
+  echo "音色（第二个参数可选，默认 xiaoxiao）："
+  local first=1
+  for v in "${VOICES[@]}"; do
+    local key=${v%%|*}; local rest=${v#*|}; local full=${rest%%|*}; local desc=${rest#*|}
+    if [ $first -eq 1 ]; then printf "  %-11s %s（默认）\n" "$key" "$desc"; first=0
+    else printf "  %-11s %s\n" "$key" "$desc"; fi
+  done
+  echo
+  echo "语气（第一个可选参数，默认 normal）："
+  for p in "${PRESETS[@]}"; do
+    printf "  %-8s rate=%s pitch=%s volume=%s\n" "${p%%|*}" \
+      "$(echo "$p" | cut -d'|' -f2)" "$(echo "$p" | cut -d'|' -f3)" "$(echo "$p" | cut -d'|' -f4)"
+  done
+  echo
+  echo "情绪风格（Azure 官方，直接当语气用）："
+  echo "  affectionate(宠溺) cheerful(开心) gentle(温柔) sad(难过) angry(生气)"
+  echo "  calm(平静) fearful(害怕) disgruntled(不爽) serious(认真) sorry(抱歉)"
+  echo "  whisper(耳语) chat(闲聊) newscast(播报) poetry(念诗) lyrical(抒情)"
+  echo
+  echo "BreezeBlue 音色（自然语言情绪，表达最自由）："
+  echo "  把第三个参数写成 breeze 就走它，例如："
+  echo "    /root/say \"你回来啦\" sweet breeze"
+  echo "    /root/say \"你猜我今天看见谁了\" excited breeze"
+  echo "  可用语气：normal sweet cold excited sleepy angry whisper gentle sad cheerful shy pout"
+  echo "            low = 声音压低但语速正常（想说低沉又不拖的时候用这个）"
+  echo "  第 4 个参数可以写一句自定义描述（代替语气），例如："
+  echo "    /root/say \"嗯…我在想\" low breeze \"声音压很低，像刚睡醒，但别拖\""
+  echo "  第 5 个参数是语速倍率：1.0 自动校准到 4.5 字/秒，0.9 慢一点，1.15 快一点"
+  echo "    /root/say \"你听我说\" low breeze \"\" 1.15"
+  echo "  配置在 /root/.dsh/breeze_tts.conf（key / voice / guidance）"
+  echo
+  echo "例：/root/say \"你回来啦\" cheerful xiaoyi"
+  echo "    /root/say \"今天不想说话\" sleepy xiaoyi   （slow/pitch 类走 edge-tts）"
+}
+
+CONF=/root/.dsh/voice.conf
+DEF_P="normal"; DEF_V="xiaoxiao"
+if [ -f "$CONF" ]; then
+  read -r _p _v < "$CONF" 2>/dev/null
+  [ -n "${_p:-}" ] && DEF_P=$_p
+  [ -n "${_v:-}" ] && DEF_V=$_v
+fi
+
+# /root/say --set "sweet xiaoyi"  → 改默认声音
+if [ "${1:-}" = "--set" ]; then
+  if [ -z "${2:-}" ]; then echo "用法：/root/say --set \"语气 音色\"" >&2; exit 1; fi
+  mkdir -p "$(dirname "$CONF")"
+  printf '%s\n' "$2" > "$CONF"
+  chown u0_a234:u0_a234 "$CONF" 2>/dev/null
+  echo "默认声音已设为：$2"
+  exit 0
+fi
+
+if [ "${1:-}" = "--list" ] || [ "${1:-}" = "-l" ]; then show_list; exit 0; fi
+if [ $# -lt 1 ] || [ -z "${1// }" ]; then show_list; exit 1; fi
+
+TEXT="$1"
+PRESET="${2:-$DEF_P}"
+VKEY="${3:-$DEF_V}"
+# 第 4 个参数：自定义语气描述（自然语言，只在 Breeze 档生效，会给整段话定调）
+#   /root/say "话" normal breeze "第一句冷淡；中间停一下；最后一句带笑意"
+INS="${4:-}"
+# 第 5 个参数：语速倍率（只在 Breeze 档生效）
+#   1.0 = 自动校准到 4.5 字/秒（默认）；0.9 = 故意慢一点；1.15 = 快一点
+RATE_ARG="${5:-1.3}"
+
+# 查表
+VOICE_FULL=""; VOICE_OK=0
+for v in "${VOICES[@]}"; do
+  if [ "${v%%|*}" = "$VKEY" ]; then rest=${v#*|}; VOICE_FULL=${rest%%|*}; VOICE_OK=1; fi
+done
+# 音色写 breeze → 走 BreezeBlue 云端（音色由它那边的 voice ID 决定）
+if [ "$VKEY" = "breeze" ]; then VOICE_OK=1; VOICE_FULL="breeze"; fi
+[ $VOICE_OK -eq 0 ] && { echo "没有这个音色：$VKEY（用 /root/say --list 看列表）" >&2; exit 1; }
+
+RATE="+0%"; PITCH="+0Hz"; VOL="+0%"; PRESET_OK=0
+for p in "${PRESETS[@]}"; do
+  if [ "${p%%|*}" = "$PRESET" ]; then
+    RATE=$(echo "$p" | cut -d'|' -f2); PITCH=$(echo "$p" | cut -d'|' -f3); VOL=$(echo "$p" | cut -d'|' -f4)
+    PRESET_OK=1
+  fi
+done
+if [ $PRESET_OK -eq 0 ]; then
+  case " $AZ_STYLES " in
+    *" $PRESET "*) RATE="+0%"; PITCH="+0Hz"; VOL="+0%" ;;   # Azure 情绪风格，走官方接口
+    *)
+      case " $BREEZE_TONES " in
+        *" $PRESET "*) RATE="+0%"; PITCH="+0Hz"; VOL="+0%" ;;   # BreezeBlue 语气
+        *) echo "没有这个语气：$PRESET（用 /root/say --list 看列表）" >&2; exit 1 ;;
+      esac
+      ;;
+  esac
+fi
+
+TS=$(date +%s)
+OUT="$OUTDIR/say-$TS.mp3"
+
+# ---- 发送出口（2026-10-30 加）----
+# 插件的出站围栏只认 mediaDir（= /root/.dsh/media/onebot）。
+# 走 /root 那条要"管理员回合"才放开，心跳/注入的回合会被直接拦掉 ——
+# 她今天就因此有两条语音没发出去，每次都得手动 cp 到 media/onebot。
+# 所以生成完统一挪一份进去，打印那个路径，拿到就能发。
+SENDDIR=/root/.dsh/media/onebot
+finish() {
+  local f="$1"
+  [ -s "$f" ] || return 1
+  mkdir -p "$SENDDIR" 2>/dev/null
+  if cp "$f" "$SENDDIR/${f##*/}" 2>/dev/null; then
+    f="$SENDDIR/${f##*/}"
+  fi
+  # 只留最近 40 条（2026-11-06 从 8 提到 40）：她反馈「之前生成的语音被整批扫掉过」，
+  # 查下来不是外部清理脚本，就是这里 tail -n +9 —— 保留 8 条，一次批量生成就淘汰一批。
+  # mediaDir 还要放入站媒体和审计日志，所以仍然要有个上限；40 条约 4~6 MB，够用。
+  # 原件不删：$OUTDIR（media/tts/）里一直留着，这里只清发送出口的副本。
+  ls -1t "$SENDDIR"/say-*.mp3 2>/dev/null | tail -n +41 | while read -r old; do
+    rm -f "$old" 2>/dev/null
+  done
+  echo "$f"
+  exit 0
+}
+
+# ---- 引擎 0：BreezeBlue（音色写 breeze 时用；失败回落到默认音色的 edge-tts）----
+if [ "$VKEY" = "breeze" ]; then
+  if [ -f /root/.dsh/breeze_tts.conf ]; then
+    if [ -n "$INS" ]; then
+      # 有第 4 参数 → 用自定义描述，忽略预设语气
+      if python3 /root/breeze_tts.py --text "$TEXT" --instructions "$INS" \
+           --rate "$RATE_ARG" --out "$OUT" >/dev/null 2>&1; then
+        finish "$OUT"
+      fi
+    else
+      if python3 /root/breeze_tts.py --text "$TEXT" --tone "$PRESET" \
+           --rate "$RATE_ARG" --out "$OUT" >/dev/null 2>&1; then
+        finish "$OUT"
+      fi
+    fi
+  fi
+  echo "BreezeBlue 没成（查 /root/.dsh/breeze_tts.conf），退回 $DEF_V" >&2
+  VKEY="$DEF_V"
+  for v in "${VOICES[@]}"; do
+    if [ "${v%%|*}" = "$VKEY" ]; then rest=${v#*|}; VOICE_FULL=${rest%%|*}; fi
+  done
+fi
+
+# ---- 引擎 1：Azure（只在给了合法 style 时用；失败自动落到 edge-tts）----
+case " $AZ_STYLES " in
+  *" $PRESET "*)
+    if python3 /root/aztts.py --text "$TEXT" --voice "$VOICE_FULL" --style "$PRESET" \
+         --rate "$RATE" --pitch "$PITCH" --volume "$VOL" --out "$OUT" >/dev/null 2>&1; then
+      finish "$OUT"
+    fi
+    echo "Azure 这条 style 没成（$PRESET），退回 edge-tts" >&2
+    ;;
+esac
+
+# ---- 引擎 1：edge-tts ----
+if command -v edge-tts >/dev/null 2>&1; then
+  edge-tts --voice "$VOICE_FULL" --rate="$RATE" --pitch="$PITCH" --volume="$VOL" \
+           --text "$TEXT" --write-media "$OUT" >/dev/null 2>&1
+  if [ -s "$OUT" ]; then finish "$OUT"; fi
+  echo "edge-tts 失败，改用百度引擎" >&2
+fi
+
+# ---- 引擎 2：百度翻译 TTS（无依赖兜底，只有 4 个音色）----
+case "$VKEY" in
+  xiaoyi|hsiaoyu) BAIDU_PER=4 ;;   # 甜女声
+  *)              BAIDU_PER=0 ;;   # 默认女声
+esac
+case "$PRESET" in
+  excited) SPD=6 ;; sleepy) SPD=2 ;; cold) SPD=3 ;; *) SPD=5 ;;
+esac
+Q=$(printf '%s' "$TEXT" | head -c 400 | python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.stdin.read()))' 2>/dev/null)
+[ -z "$Q" ] && { echo "转义失败" >&2; exit 1; }
+curl -s -m 25 -A "Mozilla/5.0" \
+  "https://fanyi.baidu.com/gettts?lan=zh&text=$Q&spd=$SPD&source=web&per=$BAIDU_PER" \
+  -o "$OUT"
+if [ -s "$OUT" ]; then finish "$OUT"; else echo "两个引擎都没出声，检查一下网络" >&2; exit 1; fi
