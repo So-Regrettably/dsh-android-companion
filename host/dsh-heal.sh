@@ -33,12 +33,18 @@ while true; do
       ss -lnt 2>/dev/null | grep -q ':38571' && break
     done
 
-    # 4) 还没起来，用 proot 兜底
+    # 4) 还没起来，force-stop 重开 App（不要 root 起 proot，会污染 SELinux context）
     if ! ss -lnt 2>/dev/null | grep -q ':38571'; then
-      echo "$(date +%F' '%T) app failed, fallback to proot" >> $LOG
-      rm -f /data/data/dsh.android.client/files/linux/ubuntu/root/.dsha-stopped
-      nohup setsid sh /data/adb/dsh-start.sh >/dev/null 2>&1 &
-      sleep 30
+      echo "$(date +%F' '%T) app retry failed, force-stop and reopen" >> $LOG
+      am force-stop dsh.android.client 2>/dev/null
+      sleep 4
+      am start -n dsh.android.client/com.deepseekharness.app.ui.MainActivity >/dev/null 2>&1
+      sleep 12
+      ACT=$(dumpsys activity activities 2>/dev/null | grep topResumedActivity | head -1)
+      if echo "$ACT" | grep -q 'StartupRecoveryActivity'; then
+        input tap 540 1265
+        sleep 10
+      fi
     fi
     ss -lnt 2>/dev/null | grep -q ':38571' && echo "$(date +%F' '%T) recovered" >> $LOG
   fi
