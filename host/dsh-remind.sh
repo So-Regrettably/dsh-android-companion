@@ -13,13 +13,13 @@
 # 日志：/data/adb/remind.log
 # 关掉：rm /data/adb/service.d/99-dsh-remind.sh 并 kill 进程
 
-PREFIX=/data/data/com.dsh.client/files/linux/ubuntu
+PREFIX=/data/data/dsh.android.client/files/linux/ubuntu
 WS=$PREFIX/root
 DIR=$WS/.dsh/reminders
 INJ=$WS/.dsh/media/onebot/qq-inject.jsonl
 LOG=/data/adb/remind.log
-ADMIN=YOUR_QQ
-BOT=BOT_QQ
+ADMIN=781073897
+BOT=429316849
 INTERVAL=30
 # 她自己出去玩的续敲（回合制改不了，但可以连着叫几次，让她"玩一阵"而不是"玩一下"）
 PLAY_MARK=$WS/.dsh/play.now
@@ -36,7 +36,7 @@ MEM_STATE=/data/adb/memguard.last
 MEM_APPS="com.max.xiaoheihe com.zhihu.android tv.danmaku.bili"
 
 # 卡死看门狗（2026-10-25 17:1x 建）：会话太长 / 上游不回时，她的回合会挂在半路——
-# 消息进来了、`turn/end` 迟迟不来、node 进程 CPU 却是 0，heal 只看 3080 端口根本发现不了。
+# 消息进来了、`turn/end` 迟迟不来、node 进程 CPU 却是 0，heal 只看 38571 端口根本发现不了。
 # 判据：日志最后一段里「followup」出现在「turn/end」之后，且日志 5 分钟没长过。
 WEBLOG=$WS/dsh-web.log
 STUCK_STATE=/data/adb/stuck.state
@@ -57,25 +57,37 @@ inject() {
 
 rotate_session() {
   MAP=$WS/.dsh/media/onebot/chat-sessions.json
-  [ -f "$MAP" ] || return
-  cp -p "$MAP" "/data/adb/backup/chat-sessions.json.$(date +%s)" 2>/dev/null
-  printf '{}\n' > "$MAP"
-  chown u0_a234:u0_a234 "$MAP" 2>/dev/null
+  if [ -f "$MAP" ]; then
+    cp -p "$MAP" "/data/adb/backup/chat-sessions.json.$(date +%s)" 2>/dev/null
+    printf '{}\n' > "$MAP"
+    chown u0_a264:u0_a264 "$MAP" 2>/dev/null
+  fi
+  # 2026-11-07：清映射表不够。插件把 chatId→sessionId 缓存在进程内存里，
+  # turn/end 时会 saveMappingDebounced() 把旧 id 原样写回去 —— 所以 11-02 起
+  # 每天 05:00 都记了 rotate.state，会话却一直是同一个（9 天 5.4MB，幻觉变重）。
+  # 必须让进程真的退出，由 heal 用 dsh-start.sh 重新拉起，内存里的旧映射才会消失。
+  NPID=$(ss -lntp 2>/dev/null | awk '/:38571/{print $NF}' | grep -o 'pid=[0-9]*' | cut -d= -f2 | head -1)
+  if [ -n "$NPID" ]; then
+    log "rotate: kill dsh node pid=$NPID (否则旧会话 id 会被写回)"
+    kill -TERM "$NPID" 2>/dev/null
+    sleep 3
+  else
+    log "rotate: 38571 上没有找到 node 进程"
+  fi
 }
 
 restart_dsh() {
   rm -f "$WS/.dsha-stopped"
   input keyevent 224 2>/dev/null
-  am start -n com.dsh.client/com.deepseekharness.app.ui.MainActivity >/dev/null 2>&1
+  am start -n dsh.android.client/com.deepseekharness.app.ui.MainActivity >/dev/null 2>&1
   sleep 8
-  input tap 135 2333 2>/dev/null
+  input tap 540 1265 2>/dev/null
   sleep 2
-  input tap 540 660 2>/dev/null
   sleep 30
 }
 
 cpu_busy() {
-  P=$(pidof com.dsh.client 2>/dev/null | awk '{print $1}')
+  P=$(pidof dsh.android.client 2>/dev/null | awk '{print $1}')
   [ -z "$P" ] && return 1
   A=$(awk '{print $14 + $15}' "/proc/$P/stat" 2>/dev/null)
   sleep 3
@@ -86,7 +98,7 @@ cpu_busy() {
 }
 
 stuckwatch() {
-  ss -lntp 2>/dev/null | grep -q ':3080' || return
+  ss -lntp 2>/dev/null | grep -q ':38571' || return
   [ -f /data/adb/budget/BRAKE ] && return
   [ -f "$WEBLOG" ] || return
   PEND=$(tail -c 6000 "$WEBLOG" 2>/dev/null | awk '/followup from private/{f=NR} /turn\/end for private/{t=NR} END{print (f>t)?1:0}')
@@ -160,7 +172,7 @@ memguard() {
 }
 
 mkdir -p "$DIR" 2>/dev/null
-chown u0_a234:u0_a234 "$DIR" 2>/dev/null
+chown u0_a264:u0_a264 "$DIR" 2>/dev/null
 chmod 755 "$DIR" 2>/dev/null
 
 log "remind watcher started (dir=$DIR interval=${INTERVAL}s)"
@@ -172,7 +184,7 @@ while true; do
 
   # DSH 没起来时不要注入：插件启动时会把已存在的行当「历史」跳过，
   # 那样提醒就静默丢了。留着文件下一轮再试。
-  if ss -lntp 2>/dev/null | grep -q ':3080'; then
+  if ss -lntp 2>/dev/null | grep -q ':38571'; then
     for f in "$DIR"/*.txt; do
       [ -f "$f" ] || continue
       BASE=$(basename "$f" .txt)
@@ -210,7 +222,7 @@ while true; do
           NEXT=$(( NEXT + 86400 ))
         done
         printf '%s\n' "$TEXT" > "$DIR/$NEXT.daily.txt"
-        chown u0_a234:u0_a234 "$DIR/$NEXT.daily.txt" 2>/dev/null
+        chown u0_a264:u0_a264 "$DIR/$NEXT.daily.txt" 2>/dev/null
         log "重复提醒已排下一次 due=$NEXT"
       fi
     done
@@ -239,7 +251,7 @@ while true; do
       rm -f "$PLAY_STATE"
       log "play session ended (cnt=$PCNT)"
     elif [ "$((NOW - PLAST))" -ge "$PLAY_GAP" ]; then
-      if ss -lntp 2>/dev/null | grep -q ':3080'; then
+      if ss -lntp 2>/dev/null | grep -q ':38571'; then
         HM=$(date +%H:%M)
         inject "（$HM·系统提示，不是他发的消息。接着玩，别急着回来，多去看几条。刚看到/学到的，记得落进 memory/说话方式.md。）"
         echo "$PST $((PCNT + 1)) $NOW" > "$PLAY_STATE"
@@ -254,7 +266,7 @@ while true; do
       E=$((NOW - 86400))
       YDAY=$(date -d "@$E" +%F 2>/dev/null)
       [ -z "$YDAY" ] && YDAY="昨天"
-      inject "（00:00·系统提示，不是他发的消息。今天到这儿了。睡前写两样东西：diary/$YDAY.md 记今天发生的事和感受；memory/交接.md 覆盖写、不超过五百字，写给明天的自己——现在我是谁、今天学到什么、明天要记得什么。写完就睡，这条不用回。）"
+      inject "（00:00·系统提示，不是他发的消息。今天到这儿了。睡前写两样东西：diary/$YDAY.md 记今天发生的事和感受；memory/交接.md 覆盖写、不超过五百字，写给明天的自己——现在我是谁、今天学到什么、明天要记得什么。如果今天下午的事记不全（宿主崩过几次、换过会话），先读 memory/$YDAY-事实清单.md 再动笔。写完就睡，这条不用回。）"
       echo "$D" > "$CLOSE_STATE"
       log "close-of-day nudge sent (yday=$YDAY)"
     fi
@@ -262,7 +274,7 @@ while true; do
 
   # ── 每天 05:00：换新会话（这个点她必然在睡；还在聊就跳过）──
   if [ "$HH" = "05" ] && [ "$(cat "$ROT_STATE" 2>/dev/null)" != "$D" ]; then
-    if [ ! -f /data/adb/budget/BRAKE ] && ss -lntp 2>/dev/null | grep -q ':3080'; then
+    if [ ! -f /data/adb/budget/BRAKE ] && ss -lntp 2>/dev/null | grep -q ':38571'; then
       LM=$(stat -c %Y "$WEBLOG" 2>/dev/null)
       if [ -z "$LM" ]; then
         LM=0

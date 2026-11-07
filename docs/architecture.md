@@ -11,7 +11,7 @@
                                         │
 ③ 手机 dsh-onebot 插件 ──► 拼装成带边界标记的 prompt
                                         │
-                          ④ DSH（proot 容器内，:3080）
+                          ④ DSH（proot 容器内，:38571）
                                         │
                             模型调用（DeepSeek API）
                                         │

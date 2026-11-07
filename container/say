@@ -99,7 +99,7 @@ if [ "${1:-}" = "--set" ]; then
   if [ -z "${2:-}" ]; then echo "用法：/root/say --set \"语气 音色\"" >&2; exit 1; fi
   mkdir -p "$(dirname "$CONF")"
   printf '%s\n' "$2" > "$CONF"
-  chown u0_a234:u0_a234 "$CONF" 2>/dev/null
+  chown u0_a264:u0_a264 "$CONF" 2>/dev/null
   echo "默认声音已设为：$2"
   exit 0
 fi

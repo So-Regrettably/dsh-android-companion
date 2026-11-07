@@ -90,7 +90,7 @@ EOF
 确认：
 
 ```bash
-adb shell su -c 'ls /data/data/com.dsh.client/files/linux/ubuntu/root'
+adb shell su -c 'ls /data/data/dsh.android.client/files/linux/ubuntu/root'
 ```
 
 ### 手工起 DSH
@@ -102,7 +102,7 @@ adb shell su -c 'ls /data/data/com.dsh.client/files/linux/ubuntu/root'
 ```sh
 #!/system/bin/sh
 PLIB=/data/local/tmp/plib
-ROOTFS=/data/data/com.dsh.client/files/linux/ubuntu
+ROOTFS=/data/data/dsh.android.client/files/linux/ubuntu
 LIB=/data/app/<具体路径>/lib/arm64
 
 export LD_LIBRARY_PATH=$PLIB:$ROOTFS/../lib:$LIB
@@ -118,16 +118,16 @@ exec $PLIB/libproot.so --link2symlink -L --kill-on-exit -0 \
   -b /proc/self/fd:/dev/fd -b /storage/emulated/0:/sdcard \
   /bin/bash -c 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; \
     export DSH_HOME=/root/.dsh; cd /root; \
-    exec dsh web --no-open --host 127.0.0.1 --port 3080 >> /root/dsh-web.log 2>&1'
+    exec dsh web --no-open --host 127.0.0.1 --port 38571 >> /root/dsh-web.log 2>&1'
 ```
 
-`<具体路径>` 从 `ls /data/app/*/com.dsh.client*/lib/arm64` 里取。
+`<具体路径>` 从 `ls /data/app/*/dsh.android.client*/lib/arm64` 里取。
 
-先手工跑一次，确认 3080 通了再往下：
+先手工跑一次，确认 38571 通了再往下：
 
 ```bash
 adb shell su -c 'nohup setsid sh /data/adb/dsh-start.sh >/dev/null 2>&1 &'
-sleep 20 && adb shell su -c 'ss -lntp | grep 3080'
+sleep 20 && adb shell su -c 'ss -lntp | grep 38571'
 ```
 
 ---
@@ -208,7 +208,7 @@ chmod 755 /path/to/rootfs/root/say
 chcon u:object_r:app_data_file:s0:c234,c256,c512,c768 /path/to/rootfs/root/say
 ```
 
-（`10234` 是 `u0_a234`，用 `adb shell su -c 'stat -c %u /data/data/com.dsh.client'` 确认你自己的。）
+（`10234` 是 `u0_a264`，用 `adb shell su -c 'stat -c %u /data/data/dsh.android.client'` 确认你自己的。）
 
 **别把 root 属主的文件放进 `profiles/web/`**——插件热加载会 EACCES，界面会卡在「等待鉴权」。
 
@@ -231,7 +231,7 @@ chcon u:object_r:app_data_file:s0:c234,c256,c512,c768 /path/to/rootfs/root/say
 
 按顺序过一遍，每一条都要能拿出证据：
 
-- [ ] `ss -lntp | grep 3080` 有输出
+- [ ] `ss -lntp | grep 38571` 有输出
 - [ ] `dsh-web.log` 里有 `OneBot connected`
 - [ ] `dsh-web.log` 里有 `bridge ready`
 - [ ] 从 QQ 真发一条消息，能收到回复

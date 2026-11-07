@@ -14,7 +14,7 @@ import sys
 import time
 
 ROOT = "/root"
-WEB = "http://127.0.0.1:3080/"
+WEB = "http://127.0.0.1:38571/"
 PATHENV = "export PATH=/system/bin:/vendor/bin:/system/xbin:$PATH; "
 
 
@@ -53,7 +53,7 @@ def sec_service():
     ok = code in ("200", "401", "404")
     pid = ""
     try:
-        out = subprocess.run(["sh", "-c", "ss -lntp 2>/dev/null | grep :3080 | head -1"],
+        out = subprocess.run(["sh", "-c", "ss -lntp 2>/dev/null | grep :38571 | head -1"],
                              capture_output=True, timeout=8).stdout.decode()
         m = re.search(r"pid=(\d+)", out)
         if m:
@@ -169,7 +169,7 @@ def main():
 
     ok, code, pid, focus = sec_service()
     if not ok:
-        problems.append("服务没起来（3080 回了 %s）" % code)
+        problems.append("服务没起来（38571 回了 %s）" % code)
 
     tail, over, alarm = sec_budget()
     if over:
@@ -210,7 +210,7 @@ def main():
 
     print("═══ 她现在什么样（%s 北京）═══" % bj())
     print()
-    print("服务    %s  3080 回了 %s%s" %
+    print("服务    %s  38571 回了 %s%s" %
           ("在跑" if ok else "没跑", code, ("，pid " + pid) if pid else ""))
     print("前台    %s" % (focus or "?"))
     print("内存    %s" % sec_mem())

@@ -10,7 +10,7 @@
 LOG=/data/adb/maint.log
 
 # 10-24 12:10 起权威工作区是 /root（读写都在这儿），default-workspace 只是冗余副本
-WS=/data/data/com.dsh.client/files/linux/ubuntu/root
+WS=/data/data/dsh.android.client/files/linux/ubuntu/root
 BK=/data/adb/backup/workspace
 
 # 会话目录归档：换会话后会留下死目录（session.v4.jsonl.zstd 不再被任何映射引用），
@@ -33,7 +33,7 @@ backup_workspace() {
   # 用 App 属主备一份可读的（防 root 属主文件混进备份后恢复时踩 hmr 的坑）
   # chmod 只改权限位，属主还是 root —— 必须一起 chown，否则哪天从备份恢复
   # 又是一堆 EACCES（10-30 查备份时发现 169 个文件全是 root）
-  chown -R u0_a234:u0_a234 "$DST" 2>/dev/null
+  chown -R u0_a264:u0_a264 "$DST" 2>/dev/null
   chmod -R u+rwX,go+rX "$DST"
   N=$(find "$DST" -type f | wc -l)
   log "工作区已备份 -> $DST ($N 个文件)"
@@ -90,16 +90,16 @@ fix_owner() {
   #
   # 为什么需要：DSH 是以 root 身份跑 proot 的（dsh-start.sh 里 su -c），
   # 所以她写出来的每一个文件属主都是 root、SELinux 标签是 app_data_file:s0。
-  # 一旦启动方式变回 App 自己拉 proot（u0_a234 / s0:c234,...），这些文件
+  # 一旦启动方式变回 App 自己拉 proot（u0_a264 / s0:c234,...），这些文件
   # 立刻写不进——表现就是 EACCES + 会话保存失败 + 记忆写不进去。
   # 10-29（67 个）、10-30（87 个）各踩过一次，第二次连当前会话目录都是 root。
   #
   # 只改权限元数据，不碰内容。跳过 node_modules（几万个文件，扫起来慢且不会出问题）。
   P='*/node_modules/*'
-  N=$(find "$WS" -not -path "$P" -not -user u0_a234 2>/dev/null | wc -l)
+  N=$(find "$WS" -not -path "$P" -not -user u0_a264 2>/dev/null | wc -l)
   if [ "$N" -gt 0 ]; then
-    find "$WS" -not -path "$P" -not -user u0_a234 2>/dev/null \
-      -exec chown u0_a234:u0_a234 {} +
+    find "$WS" -not -path "$P" -not -user u0_a264 2>/dev/null \
+      -exec chown u0_a264:u0_a264 {} +
     log "属主自愈：修正 $N 项（原本是 root）"
   fi
   M=$(find "$WS" -not -path "$P" -not -context "u:object_r:app_data_file:s0:c234,c256,c512,c768" \

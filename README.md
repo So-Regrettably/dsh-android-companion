@@ -4,6 +4,8 @@
 
 这不是一个"手机上跑大模型"的项目。模型在云端（DeepSeek），手机做的是：**让它活着、让它能感知、让它能动手、让它不烧钱**。
 
+> **当前版本**：DSHA 0.2.1-rc.2（包名 `dsh.android.client`，Web 端口 38571）。升级过程见 [docs/upgrade-0.2.1.md](docs/upgrade-0.2.1.md)。
+
 ---
 
 ## 它长什么样
@@ -14,7 +16,7 @@
 │  ┌── 宿主机（root）──────────────┐   ┌── proot 容器 ────────────┐  │
 │  │                               │   │                          │  │
 │  │  Magisk + service.d           │   │  Ubuntu rootfs           │  │
-│  │    15 个守护脚本              │   │    ├── dsh web (:3080)   │  │
+│  │    15 个守护脚本              │   │    ├── dsh web (:38571)   │  │
 │  │      ├ dsh-heal    端口自愈   │   │    ├── 插件 dsh-onebot   │  │
 │  │      ├ dsh-remind  提醒/看门狗│   │    ├── /root/say  (TTS)  │  │
 │  │      ├ dsh-budget  预算熔断   │   │    ├── /root/stt.py(STT) │  │
@@ -56,7 +58,7 @@ Android 会杀后台。DSH 跑在 proot 容器里，容器随 App 进程一起�
 
 | 脚本 | 频率 | 管什么 |
 |---|---|---|
-| `dsh-heal` | 120s | 端口 3080 没了就用 libproot 手工拉起 |
+| `dsh-heal` | 120s | 端口 38571 没了就用 libproot 手工拉起 |
 | `dsh-remind` | 30s | 提醒队列、内存守护、卡死看门狗、收工/换会话 |
 | `dsh-budget` | 10min | 重读额度、写账本、超限熔断 |
 | `dsh-heartbeat` | 可变 | 主动开口的节奏与准入 |
@@ -73,7 +75,7 @@ export PROOT_TMP_DIR=$ROOTFS/../tmp
 export PROOT_L2S_DIR=$ROOTFS/.l2s
 exec $PLIB/libproot.so --link2symlink -L --kill-on-exit -0 \
   --rootfs=$ROOTFS --cwd=/root \
-  $BINDS /bin/bash -c '... exec dsh web --host 127.0.0.1 --port 3080'
+  $BINDS /bin/bash -c '... exec dsh web --host 127.0.0.1 --port 38571'
 ```
 
 **判断"活着"不能只看进程在不在。** 最有用的一条判据是「日志还在不在长」——进程活着但不干活（CPU 空转、无输出）是最难发现的状态。所以看门狗盯的是：

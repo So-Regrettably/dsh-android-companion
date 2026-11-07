@@ -177,7 +177,7 @@ sed -i 's|name="web_startup_recovery_requested" value="true"|...value="false"|' 
 
 **现象**：批量禁用几个包之后，DSH 的会话 id 变了，上下文全断。
 
-**原因**：包变更会触发 `com.dsh.client` 重启。
+**原因**：包变更会触发 `dsh.android.client` 重启。
 
 **修法**：不要批量。一次一个，禁完观察。`com.xiaomi.market` 这类 MIUI 核心包禁不掉，别浪费时间去试。
 
