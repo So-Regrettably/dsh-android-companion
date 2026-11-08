@@ -1,130 +1,241 @@
 #!/usr/bin/env python3
-"""paint —— 云端画图（智谱 CogView，中文提示词直接支持）
+"""paint —— 画图（默认走 Civitai 官方「大肥鱼」LoRA，中文描述自动翻译）
 
 用法：
-    paint "蓝发女仆少女，蓝色大眼睛，鲸鱼尾巴，动漫风，全身"
-    paint --avatar "..."            # 生成后圆形裁剪成头像
-    paint --tall "..."              # 竖版 768x1344（全身立绘用，推荐）
-    paint --square "..."            # 方形 1024x1024
-    paint --flash "..."             # 用免费的 cogview-3-flash（细节弱一些）
-    paint --size 1024x1024 "..."    # 自定义尺寸
+    paint "坐在电脑前摸鱼，桌上摆着一大碗白米饭"        # 场景图
+    paint --scene "满脸委屈地端着白饭碗"               # 同上，显式
+    paint "站在窗边看雨"  --tall                       # 竖版立绘（默认）
+    paint --square "对着镜头得意地笑"                   # 方图
+    paint --avatar "头像，开心地眨眼"                   # 正方形 + 圆形裁剪
+    paint --wide "躺在地板上摆烂"                       # 横图
+    paint --zhipu "随便画个可爱少女"                    # 退回智谱（不依赖代理）
+    paint --flash "..."                                # 智谱免费版
 
-默认模型 cogview-4（细节强，尾巴/质感画得出来；按张计费）。
-加 --flash 换回免费的 cogview-3-flash。
+输出：/root/paint-out/<时间戳>.jpg   （成功后打印 OK <路径>）
 
-输出 /root/paint-out/<时间戳>.jpg
-API key 放在 /root/.dsh/zhipu_key.conf（一行）。
+依赖：本地 mihomo 代理 127.0.0.1:7897（只给本脚本用，不影响系统网络）
+配置：/root/.dsh/civitai_key.conf（Civitai API key）、/root/.dsh/zhipu_key.conf（备用）
 """
-import sys, os, time, json, urllib.request
+
+import base64
+import json
+import os
+import re
+import sys
+import time
+import urllib.parse
+import urllib.request
 
 OUT_DIR = "/root/paint-out"
-os.makedirs(OUT_DIR, exist_ok=True)
-KEY_FILE = "/root/.dsh/zhipu_key.conf"
-API = "https://open.bigmodel.cn/api/paas/v4/images/generations"
+PROXY = "http://127.0.0.1:7897"
+CIVITAI_KEY = "/root/.dsh/civitai_key.conf"
+ZHIPU_KEY = "/root/.dsh/zhipu_key.conf"
 
-args = sys.argv[1:]
-avatar = False
-size = "1024x1024"
-model = "cogview-4"
-rest = []
-i = 0
-while i < len(args):
-    a = args[i]
-    if a == "--avatar":
-        avatar = True
-    elif a == "--flash":
-        model = "cogview-3-flash"
-    elif a == "--model" and i + 1 < len(args):
-        model = args[i + 1]
-        i += 1
-    elif a == "--tall":
-        size = "768x1344"
-    elif a == "--square":
-        size = "1024x1024"
-    elif a == "--size" and i + 1 < len(args):
-        size = args[i + 1]
-        i += 1
-    else:
-        rest.append(a)
-    i += 1
+CKPT = "urn:air:sdxl:checkpoint:civitai:795765@889818"          # Illustrious-XL
+LORA = "urn:air:sdxl:lora:civitai:2697171@3218534"              # 大肥鱼 IllustriousXL v1.0
 
-prompt = " ".join(rest).strip()
-if not prompt:
-    print('用法: paint "中文描述"   （可加 --avatar / --tall / --size 宽x高）')
-    sys.exit(2)
+CHAR = ("deepseek_whale_girl, deepseek_maid_outfit, 1girl, solo, blue eyes, "
+        "very long wavy gradient blue hair, bangs, ahoge, whale fin ears, "
+        "white frilled maid headdress, navy blue maid dress, white frilled apron, "
+        "blue whale emblem, dark blue neck bow, blue gemstone brooch, puff sleeves, "
+        "long sleeves, gold trim, blue whale tail, starry tail pattern, "
+        "white thighhighs, black mary janes")
 
-try:
-    with open(KEY_FILE) as f:
-        key = f.read().strip()
-except OSError:
-    print("缺 key：请把智谱 API key 写到 %s" % KEY_FILE)
-    sys.exit(3)
-if not key:
-    print("key 文件是空的：%s" % KEY_FILE)
-    sys.exit(3)
+NEG = "worst quality, low quality, blurry, bad anatomy, extra digits, watermark, text"
 
-payload = json.dumps({"model": model, "prompt": prompt, "size": size}).encode("utf-8")
+SIZES = {"tall": (832, 1216), "square": (1024, 1024), "wide": (1216, 832)}
 
-path = None
-for attempt in range(3):
+
+def has_cjk(s):
+    return any("\u4e00" <= ch <= "\u9fff" for ch in s)
+
+
+def translate(text):
+    """中文 -> 英文（MyMemory 免费接口）"""
+    if not has_cjk(text):
+        return text
     try:
-        req = urllib.request.Request(API, data=payload, headers={
-            "Authorization": "Bearer " + key,
-            "Content-Type": "application/json",
-        }, method="POST")
-        with urllib.request.urlopen(req, timeout=120) as r:
+        url = ("https://api.mymemory.translated.net/get?q="
+               + urllib.parse.quote(text) + "&langpair=zh-CN|en")
+        with urllib.request.urlopen(url, timeout=20) as r:
             j = json.loads(r.read().decode("utf-8", "replace"))
-        items = j.get("data") or []
-        if not items:
-            print("接口返回异常：%s" % json.dumps(j, ensure_ascii=False)[:300])
-            time.sleep(5)
-            continue
-        img_url = items[0].get("url") or ""
-        if not img_url:
-            print("没拿到图片地址")
-            continue
-        with urllib.request.urlopen(img_url, timeout=90) as r2:
-            data = r2.read()
-        if data[:3] == b"\xff\xd8\xff":
-            ext = ".jpg"
-        elif data[:4] == b"\x89PNG":
-            ext = ".png"
-        elif data[:4] == b"RIFF":
-            ext = ".webp"
-        else:
-            print("下载的不是图片：%d 字节" % len(data))
-            continue
-        path = os.path.join(OUT_DIR, time.strftime("%Y%m%d-%H%M%S") + ext)
-        with open(path, "wb") as f:
-            f.write(data)
-        print("OK %s (%d bytes)" % (path, len(data)))
-        break
-    except Exception as e:
-        print("请求失败（第 %d 次）：%s" % (attempt + 1, e))
-        time.sleep(6)
+        out = (j.get("responseData") or {}).get("translatedText") or ""
+        return out.strip() or text
+    except Exception:
+        return text
 
-if not path:
-    print("失败：多次重试仍未生成")
-    sys.exit(1)
 
-if avatar:
+def opener(use_proxy=True):
+    if use_proxy:
+        h = urllib.request.ProxyHandler({"http": PROXY, "https": PROXY})
+    else:
+        h = urllib.request.ProxyHandler({})
+    return urllib.request.build_opener(h)
+
+
+def read_conf(path):
+    try:
+        return open(path, encoding="utf-8").read().strip()
+    except Exception:
+        return ""
+
+
+def gen_civitai(prompt, w, h, seed=None):
+    key = read_conf(CIVITAI_KEY)
+    if not key:
+        raise RuntimeError("没有 Civitai key")
+    body = {
+        "steps": [{
+            "$type": "imageGen",
+            "input": {
+                "engine": "sdcpp",
+                "ecosystem": "sdxl",
+                "operation": "createImage",
+                "model": CKPT,
+                "prompt": prompt,
+                "negativePrompt": NEG,
+                "width": w, "height": h,
+                "cfgScale": 7,
+                "steps": 28,
+                "quantity": 1,
+                "loras": {LORA: 1.0},
+            },
+        }]
+    }
+    if seed:
+        body["steps"][0]["input"]["seed"] = int(seed)
+    req = urllib.request.Request(
+        "https://orchestration.civitai.com/v2/consumer/workflows?wait=90",
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
+        method="POST")
+    with opener(True).open(req, timeout=180) as r:
+        j = json.loads(r.read().decode("utf-8", "replace"))
+    if j.get("status") != "succeeded":
+        raise RuntimeError("生成失败：%s" % json.dumps(j.get("errors") or j)[:200])
+    imgs = ((j.get("steps") or [{}])[0].get("output") or {}).get("images") or []
+    if not imgs:
+        raise RuntimeError("没有返回图片")
+    url = imgs[0].get("url") or imgs[0].get("previewUrl")
+    with opener(True).open(url, timeout=120) as r:
+        return r.read()
+
+
+def gen_zhipu(prompt, w, h, flash=False):
+    key = read_conf(ZHIPU_KEY)
+    if not key:
+        raise RuntimeError("没有智谱 key")
+    model = "cogview-3-flash" if flash else "cogview-4"
+    size = "%dx%d" % (w, h)
+    body = json.dumps({"model": model, "prompt": prompt, "size": size}).encode()
+    req = urllib.request.Request(
+        "https://open.bigmodel.cn/api/paas/v4/images/generations",
+        data=body,
+        headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
+        method="POST")
+    with opener(False).open(req, timeout=120) as r:
+        j = json.loads(r.read().decode("utf-8", "replace"))
+    url = j["data"][0]["url"]
+    with opener(False).open(url, timeout=120) as r:
+        return r.read()
+
+
+def circle_crop(path):
     try:
         from PIL import Image, ImageDraw
         im = Image.open(path).convert("RGBA")
-        w, h = im.size
-        s = min(w, h)
-        im = im.crop(((w - s) // 2, (h - s) // 2, (w + s) // 2, (h + s) // 2))
+        s = min(im.size)
+        im = im.crop(((im.width - s) // 2, (im.height - s) // 2,
+                      (im.width + s) // 2, (im.height + s) // 2))
         mask = Image.new("L", (s, s), 0)
         ImageDraw.Draw(mask).ellipse((0, 0, s, s), fill=255)
-        out = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-        out.paste(im, (0, 0), mask)
-        ap = os.path.splitext(path)[0] + "-avatar.png"
-        out.save(ap)
-        print("头像已裁圆：%s" % ap)
-        path = ap
-    except ImportError:
-        print("（没装 Pillow，跳过圆形裁剪）")
+        im.putalpha(mask)
+        im.save(path)
+        return True
     except Exception as e:
-        print("裁剪失败：%s" % e)
+        print("圆形裁剪跳过：%s" % e)
+        return False
 
-print("PATH=%s" % path)
+
+def main():
+    args = sys.argv[1:]
+    avatar = False
+    scene = None
+    size = SIZES["tall"]
+    engine = "civitai"
+    flash = False
+    seed = None
+    words = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--avatar":
+            avatar, size = True, SIZES["square"]
+        elif a == "--square":
+            size = SIZES["square"]
+        elif a == "--tall":
+            size = SIZES["tall"]
+        elif a == "--wide":
+            size = SIZES["wide"]
+        elif a == "--size" and i + 1 < len(args):
+            w, h = args[i + 1].lower().split("x")
+            size = (int(w), int(h))
+            i += 1
+        elif a == "--scene" and i + 1 < len(args):
+            scene = args[i + 1]
+            i += 1
+        elif a == "--zhipu":
+            engine = "zhipu"
+        elif a == "--flash":
+            engine, flash = "zhipu", True
+        elif a == "--seed" and i + 1 < len(args):
+            seed = args[i + 1]
+            i += 1
+        else:
+            words.append(a)
+        i += 1
+
+    text = scene or " ".join(words).strip()
+    if not text and engine != "civitai":
+        print("用法：paint \"中文描述\" [--tall|--square|--wide|--avatar]")
+        return 1
+
+    if engine == "civitai":
+        en = translate(text) if text else ""
+        if en:
+            prompt = CHAR + ", " + en + ", masterpiece, best quality"
+        else:
+            prompt = CHAR + ", full body, standing, white background, masterpiece, best quality"
+    else:
+        prompt = text
+
+    os.makedirs(OUT_DIR, exist_ok=True)
+    ts = time.strftime("%Y%m%d-%H%M%S")
+    data, used = None, engine
+
+    if engine == "civitai":
+        try:
+            print("用官方大肥鱼 LoRA 画（约 4 Buzz）…")
+            data = gen_civitai(prompt, size[0], size[1], seed)
+        except Exception as e:
+            print("Civitai 失败（%s），改用智谱兜底…" % str(e)[:120])
+            used = "zhipu-fallback"
+            data = gen_zhipu(prompt if not has_cjk(prompt) else text, size[0], size[1])
+    else:
+        data = gen_zhipu(prompt, size[0], size[1], flash)
+
+    ext = ".png" if data[:4] == b"\x89PNG" else ".jpg"
+    path = os.path.join(OUT_DIR, ts + ext)
+    with open(path, "wb") as f:
+        f.write(data)
+
+    if avatar:
+        circle_crop(path)
+
+    print("OK %s (%d bytes, %s)" % (path, len(data), used))
+    print("PROMPT %s" % prompt)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
