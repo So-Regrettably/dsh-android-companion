@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+"""paint —— 云端画图（pollinations.ai 免费版，限速 45 秒/张）
+
+用法：
+    paint "一只橙色圆头小鱼，大眼睛，粉脸蛋，手绘插画风格"
+    paint --avatar "..."       # 生成后圆形裁剪成头像（512x512）
+    paint --size 1024 "..."    # 指定尺寸（默认 512）
+
+输出到 /root/paint/<时间戳>.png
+
+为什么要云端：手机跑不动本地模型（Stable Diffusion 要 GPU/大内存），
+这里只发请求、收图，手机零负担。免费版每 45 秒 1 张，脚本会自动等。
+"""
+import sys, os, time, json, urllib.parse, urllib.request
+
+OUT_DIR = "/root/paint-out"
+os.makedirs(OUT_DIR, exist_ok=True)
+
+args = sys.argv[1:]
+avatar = False
+size = 512
+rest = []
+i = 0
+while i < len(args):
+    a = args[i]
+    if a == "--avatar":
+        avatar = True
+    elif a == "--size" and i + 1 < len(args):
+        try:
+            size = int(args[i + 1])
+        except ValueError:
+            pass
+        i += 1
+    else:
+        rest.append(a)
+    i += 1
+
+prompt = " ".join(rest).strip()
+if not prompt:
+    print('用法: paint "提示词"   （可加 --avatar / --size 1024）')
+    sys.exit(2)
+
+# pollinations 不认中文（会画成无关的东西），先翻译成英文
+def translate_zh(text):
+    try:
+        q = urllib.parse.quote(text)
+        req = urllib.request.Request(
+            "https://api.mymemory.translated.net/get?q=%s&langpair=zh-CN|en" % q,
+            headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            j = json.loads(r.read().decode("utf-8", "replace"))
+        en = (j.get("responseData") or {}).get("translatedText") or ""
+        return en.strip()
+    except Exception as e:
+        print("翻译失败：%s" % e)
+        return ""
+
+if any('\u4e00' <= ch <= '\u9fff' for ch in prompt):
+    print("检测到中文，先翻译成英文...")
+    en = translate_zh(prompt)
+    if en:
+        print("英文提示词：%s" % en)
+        prompt = en
+    else:
+        print("翻译没成功，直接用原文（画出来可能不对）")
+
+url = ("https://image.pollinations.ai/prompt/" + urllib.parse.quote(prompt)
+       + "?width=%d&height=%d&nologo=true" % (size, size))
+
+path = None
+if any('\u4e00' <= ch <= '\u9fff' for ch in prompt):
+    print("提示：pollinations 对中文支持不好（会变成问号），建议用英文描述")
+for attempt in range(5):
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Linux; Android 13)"})
+        with urllib.request.urlopen(req, timeout=100) as r:
+            data = r.read()
+        ext = None
+        if data[:4] == b"\x89PNG":
+            ext = ".png"
+        elif data[:3] == b"\xff\xd8\xff":
+            ext = ".jpg"
+        elif data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+            ext = ".webp"
+        if ext:
+            path = os.path.join(OUT_DIR, time.strftime("%Y%m%d-%H%M%S") + ext)
+            with open(path, "wb") as f:
+                f.write(data)
+            print("OK %s (%d bytes)" % (path, len(data)))
+            break
+        txt = data[:300].decode("utf-8", "replace")
+        print("非图片返回（第 %d 次）：%s" % (attempt + 1, txt))
+        if "FREE_LIMIT" in txt or "402" in txt:
+            wait = 35
+            print("免费限速，等 %d 秒重试..." % wait)
+            time.sleep(wait)
+            continue
+    except Exception as e:
+        print("请求失败（第 %d 次）：%s" % (attempt + 1, e))
+        time.sleep(10)
+
+if not path:
+    print("失败：多次重试仍未生成")
+    sys.exit(1)
+
+if avatar:
+    try:
+        from PIL import Image, ImageDraw
+        im = Image.open(path).convert("RGBA")
+        w, h = im.size
+        s = min(w, h)
+        im = im.crop(((w - s) // 2, (h - s) // 2, (w + s) // 2, (h + s) // 2))
+        mask = Image.new("L", (s, s), 0)
+        ImageDraw.Draw(mask).ellipse((0, 0, s, s), fill=255)
+        out = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+        out.paste(im, (0, 0), mask)
+        ap = path.replace(".png", "-avatar.png")
+        out.save(ap)
+        print("头像已裁圆：%s" % ap)
+        path = ap
+    except ImportError:
+        print("（没装 Pillow，跳过圆形裁剪，原图就是方的）")
+    except Exception as e:
+        print("裁剪失败：%s" % e)
+
+print("PATH=%s" % path)
