@@ -4,12 +4,16 @@
 用法：
     paint "蓝发女仆少女，蓝色大眼睛，鲸鱼尾巴，动漫风，全身"
     paint --avatar "..."            # 生成后圆形裁剪成头像
-    paint --tall "..."              # 竖版 768x1344（全身立绘用，默认）
+    paint --tall "..."              # 竖版 768x1344（全身立绘用，推荐）
+    paint --square "..."            # 方形 1024x1024
+    paint --flash "..."             # 用免费的 cogview-3-flash（细节弱一些）
     paint --size 1024x1024 "..."    # 自定义尺寸
 
-输出 /root/paint-out/<时间戳>.jpg
+默认模型 cogview-4（细节强，尾巴/质感画得出来；按张计费）。
+加 --flash 换回免费的 cogview-3-flash。
 
-API key 放在 /root/.dsh/zhipu_key.conf（一行）。模型 cogview-3-flash（免费）。
+输出 /root/paint-out/<时间戳>.jpg
+API key 放在 /root/.dsh/zhipu_key.conf（一行）。
 """
 import sys, os, time, json, urllib.request
 
@@ -21,12 +25,18 @@ API = "https://open.bigmodel.cn/api/paas/v4/images/generations"
 args = sys.argv[1:]
 avatar = False
 size = "1024x1024"
+model = "cogview-4"
 rest = []
 i = 0
 while i < len(args):
     a = args[i]
     if a == "--avatar":
         avatar = True
+    elif a == "--flash":
+        model = "cogview-3-flash"
+    elif a == "--model" and i + 1 < len(args):
+        model = args[i + 1]
+        i += 1
     elif a == "--tall":
         size = "768x1344"
     elif a == "--square":
@@ -53,7 +63,7 @@ if not key:
     print("key 文件是空的：%s" % KEY_FILE)
     sys.exit(3)
 
-payload = json.dumps({"model": "cogview-3-flash", "prompt": prompt, "size": size}).encode("utf-8")
+payload = json.dumps({"model": model, "prompt": prompt, "size": size}).encode("utf-8")
 
 path = None
 for attempt in range(3):
