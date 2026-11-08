@@ -1,0 +1,47 @@
+#!/bin/bash
+# douyin —— 抖音操作，走 root 触摸通道（/root/.dsh/key）
+# 容器里的 su 没 INJECT_EVENTS，所以这里只写请求，host 侧 dsh-key.sh 替她注入。
+# 用法：
+#   douyin up            上滑（切下一个视频）
+#   douyin down          下滑（回上一个视频）
+#   douyin like          点赞（双击屏幕右侧）
+#   douyin pause         点屏幕中间（暂停/播放）
+#   douyin pauseup       先暂停，再上滑（你点名的「按下暂停再滑」）
+#   douyin tab <首页|朋友|消息|我>   点底部导航
+REQ=/root/.dsh/key
+
+req() {
+  printf '%s\n' "$1" > "$REQ"
+  sleep 1.2
+}
+
+case "$1" in
+  up)
+    req "swipe 540 1800 540 600 300"
+    echo "上滑（切下一个）" ;;
+  down)
+    req "swipe 540 600 540 1800 300"
+    echo "下滑（回上一个）" ;;
+  like)
+    req "dbltap 900 1350"
+    echo "双击点赞" ;;
+  pause)
+    req "tap 540 1200"
+    echo "点中间暂停/播放" ;;
+  pauseup)
+    req "tap 540 1200"
+    req "swipe 540 1800 540 600 300"
+    echo "暂停后上滑" ;;
+  tab)
+    case "$2" in
+      首页|home|1)  req "tap 135 2310" ;;
+      朋友|friend|2) req "tap 405 2310" ;;
+      消息|msg|3)   req "tap 675 2310" ;;
+      我|me|4)      req "tap 945 2310" ;;
+      *) echo "用法: douyin tab <首页|朋友|消息|我>"; exit 2 ;;
+    esac
+    echo "点了底部 tab" ;;
+  *)
+    echo "用法: douyin up|down|like|pause|pauseup|tab <首页|朋友|消息|我>"
+    exit 2 ;;
+esac

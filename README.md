@@ -16,7 +16,7 @@
 │  ┌── 宿主机（root）──────────────┐   ┌── proot 容器 ────────────┐  │
 │  │                               │   │                          │  │
 │  │  Magisk + service.d           │   │  Ubuntu rootfs           │  │
-│  │    15 个守护脚本              │   │    ├── dsh web (:38571)   │  │
+│  │    16 个守护脚本              │   │    ├── dsh web (:38571)   │  │
 │  │      ├ dsh-heal    端口自愈   │   │    ├── 插件 dsh-onebot   │  │
 │  │      ├ dsh-remind  提醒/看门狗│   │    ├── /root/say  (TTS)  │  │
 │  │      ├ dsh-budget  预算熔断   │   │    ├── /root/stt.py(STT) │  │
@@ -58,15 +58,19 @@ Android 会杀后台。DSH 跑在 proot 容器里，容器随 App 进程一起�
 
 | 脚本 | 频率 | 管什么 |
 |---|---|---|
-| `dsh-heal` | 120s | 端口 38571 没了就用 libproot 手工拉起 |
+| `dsh-heal` | 120s | 38571 没了就唤起 App + 点「重试启动」，再 force-stop 重开 |
 | `dsh-remind` | 30s | 提醒队列、内存守护、卡死看门狗、收工/换会话 |
 | `dsh-budget` | 10min | 重读额度、写账本、超限熔断 |
 | `dsh-heartbeat` | 可变 | 主动开口的节奏与准入 |
-| `dsh-maintenance` | 1h | 属主/SELinux 自愈、备份、日志轮转、会话归档 |
+| `dsh-maintenance` | 1h | 属主/SELinux 自愈（c8,c257）、备份、日志轮转、会话归档 |
 | `dsh-cron` | 20s | 定时任务闸门 |
 | `dsh-outbox` | 20s | 发送失败的重试队列 |
+| `dsh-key` | 1s | 按键/触摸注入：proot 写 `/root/.dsh/key`，host 侧 root 执行 swipe/tap |
+| `dsh-douyin-watch` | 30s | 抖音前台超 10 分钟自动回桌面（省电） |
+| `night-screen` | 30s | 00:00-07:00 息屏、其余亮屏；音量静音、亮度最低 |
 
-关键细节：**`dsh-heal` 起 DSH 不用 `am start`**。因为装完 ffmpeg 之后，App 内启动器执行 node 会报 `libstdc++.so.6: cannot open shared object file`（proot 退出码 127），而 shell 手工起的 proot 一切正常。所以自愈走 `/data/adb/dsh-start.sh`：
+关键细节：**`dsh-heal` 不再用 root 起 proot**。容器里的 `su` 是 Ubuntu su（只切 uid 不切 SELinux 域），root 起的 proot 会写出带错 context 的文件（`c234,c256`，新版 App 是 `c8,c257`，读不了 → EACCES）。自愈改成：唤起 App → 若停在恢复页点「重试启动」→ 还不行就 force-stop 重开。旧的 `dsh-start.sh`（root 起 proot）已废弃：
+
 
 ```sh
 export LD_LIBRARY_PATH=$PLIB:$ROOTFS/../lib:$LIB
@@ -176,8 +180,11 @@ uiautomator dump → 解析 XML → 每个可点控件带 text / resource-id / b
 │   ├── pitfalls.md            ★ 20 条踩坑记录，每条都有现象和修法
 │   └── cost.md                token 成本实测与控制手段
 ├── host/                      宿主机（Android root）守护脚本
-│   ├── dsh-heal.sh            端口自愈
+│   ├── dsh-heal.sh            自愈（App 唤起 + 重试）
 │   ├── dsh-remind.sh          提醒 / 内存 / 看门狗
+│   ├── dsh-key.sh             按键触摸注入（swipe/tap）
+│   ├── dsh-douyin-watch.sh    抖音省电回桌面
+│   ├── night-screen.sh        亮灭/静音/亮度
 │   ├── dsh-maintenance.sh     自愈 / 备份 / 轮转 / 宿主快照
 │   └── service.d/             启动挂载
 ├── container/                 proot 容器内的工具
