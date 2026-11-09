@@ -34,6 +34,9 @@ while true; do
   if ! ss -lnt 2>/dev/null | grep -q ':38571'; then
     echo "$(date +%F' '%T) dsh down, try app first" >> $LOG
 
+    input keyevent 224 >/dev/null 2>&1   # 唤醒屏幕（夜间息屏时否则 App 起不来）
+    wm dismiss-keyguard >/dev/null 2>&1
+    sleep 2
     am start -n dsh.android.client/com.deepseekharness.app.ui.MainActivity >/dev/null 2>&1
     sleep 8
     click_start
@@ -52,6 +55,9 @@ while true; do
       echo "$(date +%F' '%T) app retry failed, force-stop and reopen" >> $LOG
       am force-stop dsh.android.client 2>/dev/null
       sleep 4
+      input keyevent 224 >/dev/null 2>&1
+      wm dismiss-keyguard >/dev/null 2>&1
+      sleep 1
       am start -n dsh.android.client/com.deepseekharness.app.ui.MainActivity >/dev/null 2>&1
       sleep 12
       click_start

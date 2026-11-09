@@ -14,7 +14,7 @@ fgpkg() {
 
 whitelisted() {
   case "$1" in
-    ""|com.miui.home|com.android.systemui|dsh.android.client|com.tencent.mobileqq|com.topjohnwu.magisk|\
+    ""|com.miui.home|com.android.systemui|dsh.android.client|com.netease.cloudmusic|com.topjohnwu.magisk|\
     com.miui.*|com.android.*|com.xiaomi.*|com.google.*|com.qualcomm.*|com.mediatek.*|com.miui.voiceassist) return 0 ;;
     *) return 1 ;;
   esac
@@ -26,8 +26,8 @@ while true; do
   CUR=$(fgpkg)
 
   # 检测「切回桌面」：从某 App 变到 launcher
-  if [ "$CUR" = "com.miui.home" ] && [ -n "$LAST" ] && [ "$LAST" != "com.miui.home" ]; then
-    if ! whitelisted "$LAST"; then
+  if [ -n "$LAST" ] && [ "$LAST" != "$CUR" ] && ! whitelisted "$LAST" &&      { [ "$CUR" = "com.miui.home" ] || [ "$LAST" = "com.tencent.mobileqq" ]; }; then
+    if true; then
       echo "$LAST $(date +%s)" > $CAND
       echo "$(date +%F' '%T) 用完 $LAST，60s 后若仍在后台就杀" >> $LOG
     fi
