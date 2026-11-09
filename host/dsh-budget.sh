@@ -24,7 +24,7 @@ STOP=$DEF_STOP
 # ⚠️ 必须**每轮重读**：只在启动时读一次的话，跨天后还会按着过期的临时额度走
 #    （10-27 踩到——守护是 25 号带着 12/15 启动的，26、27 号账本还写着 15 元停机）。
 OV=$DIR/override
-INTERVAL=600
+INTERVAL=180   # 2026-11-09 10分钟->3分钟，熔断更快
 INJ=/data/data/dsh.android.client/files/linux/ubuntu/root/.dsh/media/onebot/qq-inject.jsonl
 ADMIN=781073897
 BOT=429316849

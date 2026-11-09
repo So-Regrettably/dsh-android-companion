@@ -9,18 +9,37 @@
 LOG=/data/adb/dsh-heal.log
 
 # 按当前页面点启动按钮；返回 0=点了 1=没匹配到可点的按钮
+wait_up() {
+  i=0
+  while [ "$i" -lt "${1:-6}" ]; do
+    sleep 3; i=$((i+1))
+    ss -lnt 2>/dev/null | grep -q ':38571' && return 0
+  done
+  return 1
+}
+
+# 2026-11-09：按钮位置会变（实测 673 -> 833），不能硬编码单个坐标。
+# 按页面给一串候选 y，点一个等一会儿验端口，没起来再点下一个。
 click_start() {
   ACT=$(dumpsys activity activities 2>/dev/null | grep topResumedActivity | head -1)
-  if echo "$ACT" | grep -q 'StartupRecoveryActivity'; then
-    input tap 540 1265
-    echo "$(date +%F' '%T) clicked retry-start (recovery)" >> $LOG
-    return 0
+  case "$ACT" in
+    *StartupRecoveryActivity*) CAND="1265 833 673" ;;
+    *MainActivity*)            CAND="833 673 1265" ;;
+    *) CAND="" ;;
+  esac
+  if [ -z "$CAND" ]; then
+    am start -n dsh.android.client/com.deepseekharness.app.ui.MainActivity >/dev/null 2>&1
+    sleep 8
+    CAND="833 673 1265"
   fi
-  if echo "$ACT" | grep -q 'MainActivity'; then
-    input tap 540 673
-    echo "$(date +%F' '%T) clicked 启动 DSHA (main)" >> $LOG
-    return 0
-  fi
+  for y in $CAND; do
+    input tap 540 $y 2>/dev/null
+    if wait_up 6; then
+      echo "$(date +%F' '%T) clicked y=$y, dsh up" >> $LOG
+      return 0
+    fi
+  done
+  echo "$(date +%F' '%T) click_start tried [$CAND], still down" >> $LOG
   return 1
 }
 
@@ -40,7 +59,6 @@ while true; do
     am start -n dsh.android.client/com.deepseekharness.app.ui.MainActivity >/dev/null 2>&1
     sleep 8
     click_start
-    sleep 10
 
     # 等最多 90 秒
     i=0
@@ -61,7 +79,6 @@ while true; do
       am start -n dsh.android.client/com.deepseekharness.app.ui.MainActivity >/dev/null 2>&1
       sleep 12
       click_start
-      sleep 12
     fi
 
     if ss -lnt 2>/dev/null | grep -q ':38571'; then

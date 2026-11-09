@@ -80,14 +80,16 @@ rotate_session() {
   for d in $WS/.dsh/sessions/--root--/onebot-private-*; do
     case "$d" in *".old."*) continue ;; esac
     [ -d "$d" ] || continue
-    mv "$d" "$d.old.$TS" 2>/dev/null && log "rotate: archived session dir $(basename "$d")"
+    mkdir -p $WS/.dsh/sessions-archive 2>/dev/null
+    mv "$d" $WS/.dsh/sessions-archive/$(basename "$d").$TS 2>/dev/null && log "rotate: archived session dir $(basename "$d")"
   done
   PC=$WS/.dsh/storages/session_projcache/sessions
   if [ -d "$PC" ]; then
     for f in $PC/onebot-private-*.json; do
       [ -f "$f" ] || continue
       case "$f" in *".old."*) continue ;; esac
-      mv "$f" "$f.old.$TS" 2>/dev/null && log "rotate: archived projcache $(basename "$f")"
+      mkdir -p $PC/archived 2>/dev/null
+      mv "$f" $PC/archived/$(basename "$f").$TS 2>/dev/null && log "rotate: archived projcache $(basename "$f")"
     done
   fi
 }
@@ -97,12 +99,16 @@ restart_dsh() {
   input keyevent 224 2>/dev/null
   am start -n dsh.android.client/com.deepseekharness.app.ui.MainActivity >/dev/null 2>&1
   sleep 8
-  ACT=$(dumpsys activity activities 2>/dev/null | grep topResumedActivity | head -1)
-  case "$ACT" in
-    *StartupRecoveryActivity*) input tap 540 1265 ;;
-    *MainActivity*) input tap 540 673 ;;
-  esac
-  sleep 32
+  # 2026-11-09：按钮位置会变（实测 673 -> 833），按候选列表逐个试并验端口
+  for y in 833 673 1265; do
+    input tap 540 $y 2>/dev/null
+    i=0
+    while [ $i -lt 4 ]; do
+      sleep 3; i=$((i+1))
+      ss -lnt 2>/dev/null | grep -q ':38571' && break 2
+    done
+  done
+  sleep 5
 }
 
 cpu_busy() {
