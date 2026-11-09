@@ -23,7 +23,8 @@ QZ_STATE=/data/adb/heartbeat.qzone
 ADMIN=781073897
 BOT=429316849
 
-# 每日额度（10-24 调整）：工作日 闲聊10/玩6；休息日（周六日） 闲聊30/玩6
+# 每日额度（实际生效值，2026-11-09 核对）：工作日 闲聊15/玩6；休息日（周六日） 闲聊15/玩6
+# 注：10-24 曾设过 工作日10/休息日30，后来调成 15/6，旧注释一直没改，别再按旧数字理解
 CAP_CHAT_WEEKDAY=15
 CAP_PLAY_WEEKDAY=6
 CAP_CHAT_WEEKEND=15
@@ -34,10 +35,23 @@ IDLE_MIN=0
 QUIET_SPEND=0        # 0 = 关掉「花超就闭嘴」这条（10-24 用户要求：别让她不敢玩），只在 10 元熔断
 PLAY_WINDOW=900    # 休闲时段最长 15 分钟（10-25 配合续敲 2 次收紧）
 # 什么时候允许「自己出去玩」（10-26 用户要求：工作日推到 17 点后，白天是价格高峰，太贵）
-PLAY_FROM_WEEKDAY=17
+
+# DeepSeek 峰谷（2026-08-17 起，08-23 补充周末规则）：
+#   工作日高峰=北京 9:00-12:00、14:00-18:00；其余为低谷（半价）；周六日全天低谷。
+# 所以工作日「玩」必须 18 点后开始，17-18 仍属高峰。
+PLAY_FROM_WEEKDAY=18
 PLAY_FROM_WEEKEND=8
 PLAY_MAX_EXTRA=2   # 10-25 16:45 从 4 降到 2：续敲是单轮最贵的部分，砍一半
 PLAY_GAP=120       # 续敲间隔 120 秒（原 5 分钟太稀，中间死寂像"玩一下就停"）
+
+# 是否处于 DeepSeek 高峰计费时段（周末全天不算）
+is_peak() {
+  [ "$DOW" -ge 6 ] && return 1
+  case "$HH" in
+    9|10|11|14|15|16|17) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 # 2026-11-09：QQ 桥断了还继续戳她 = 白烧钱（当天实测 690M tokens / 49 元，回复全发不出去）
 # 判据：日志里最后一次 OneBot 事件是 connected 才算通
@@ -48,6 +62,8 @@ bridge_up() {
 }
 
 log() { echo "$(date '+%F %T') $*" >> $LOG; }
+
+log "heartbeat scheduler started (weekday chat=$CAP_CHAT_WEEKDAY play=$CAP_PLAY_WEEKDAY | weekend chat=$CAP_CHAT_WEEKEND play=$CAP_PLAY_WEEKEND | play_from=weekday${PLAY_FROM_WEEKDAY}h/weekend${PLAY_FROM_WEEKEND}h | is_peak=on)"
 
 log "heartbeat scheduler started (weekday chat=$CAP_CHAT_WEEKDAY play=$CAP_PLAY_WEEKDAY | weekend chat=$CAP_CHAT_WEEKEND play=$CAP_PLAY_WEEKEND | idle=${IDLE_MIN}m spend_cap=${QUIET_SPEND}(0=off) interval_weekday=40-46m interval_weekend=43-49m play_from=weekday${PLAY_FROM_WEEKDAY}h/weekend${PLAY_FROM_WEEKEND}h qzone_nudge=1/day@20h leisure=+${PLAY_MAX_EXTRA}x${PLAY_GAP}s)"
 
@@ -165,12 +181,12 @@ while true; do
   [ "$SD" != "$TODAY" ] && { SD=$TODAY; CH=0; PL=0; }
 
   # 到点之后每三次里插一次「自己去玩」，其余是闲聊
-  #   工作日 play 只允许 PLAY_FROM_WEEKDAY（17）点后；周末仍是 13 点后
-  if [ "$HH" -ge "$PLAY_FROM" ] && [ "$PL" -lt "$CAP_PLAY" ] && [ $((RANDOM % 3)) -eq 0 ]; then
+  #   工作日 play 只允许 18 点后（避开 14-18 高峰）；且任何高峰时段都不玩
+  if [ "$HH" -ge "$PLAY_FROM" ] && [ "$PL" -lt "$CAP_PLAY" ] && ! is_peak && [ $((RANDOM % 3)) -eq 0 ]; then
     KIND=play; PL=$((PL + 1))
   elif [ "$CH" -lt "$CAP_CHAT" ]; then
     KIND=chat; CH=$((CH + 1))
-  elif [ "$HH" -ge "$PLAY_FROM" ] && [ "$PL" -lt "$CAP_PLAY" ]; then
+  elif [ "$HH" -ge "$PLAY_FROM" ] && [ "$PL" -lt "$CAP_PLAY" ] && ! is_peak; then
     KIND=play; PL=$((PL + 1))
   else
     log "skip quota(chat=$CH/$CAP_CHAT play=$PL/$CAP_PLAY dow=$DOW hh=$HH playFrom=$PLAY_FROM)"; continue
