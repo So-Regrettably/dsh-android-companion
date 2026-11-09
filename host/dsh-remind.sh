@@ -74,6 +74,22 @@ rotate_session() {
   else
     log "rotate: 38571 上没有找到 node 进程"
   fi
+  # 2026-11-09：只清映射表不够——插件会从待发跟踪/投影缓存里把旧 sessionId 捞回来
+  # （实测清完重启又挂回 mw6c8ina）。这里把会话目录和投影缓存一起改名归档。
+  TS=$(date +%s)
+  for d in $WS/.dsh/sessions/--root--/onebot-private-*; do
+    case "$d" in *".old."*) continue ;; esac
+    [ -d "$d" ] || continue
+    mv "$d" "$d.old.$TS" 2>/dev/null && log "rotate: archived session dir $(basename "$d")"
+  done
+  PC=$WS/.dsh/storages/session_projcache/sessions
+  if [ -d "$PC" ]; then
+    for f in $PC/onebot-private-*.json; do
+      [ -f "$f" ] || continue
+      case "$f" in *".old."*) continue ;; esac
+      mv "$f" "$f.old.$TS" 2>/dev/null && log "rotate: archived projcache $(basename "$f")"
+    done
+  fi
 }
 
 restart_dsh() {
@@ -275,11 +291,19 @@ while true; do
   # ── 每天 05:00：换新会话（这个点她必然在睡；还在聊就跳过）──
   if [ "$HH" = "05" ] && [ "$(cat "$ROT_STATE" 2>/dev/null)" != "$D" ]; then
     if [ ! -f /data/adb/budget/BRAKE ] && ss -lntp 2>/dev/null | grep -q ':38571'; then
-      LM=$(stat -c %Y "$WEBLOG" 2>/dev/null)
-      if [ -z "$LM" ]; then
-        LM=0
-      fi
-      if [ "$((NOW - LM))" -gt 600 ]; then
+      # 2026-11-09 修：原来用 dsh-web.log 的 mtime 当'静默'判据，但桥断了会每几秒刷
+      # "forward WS error"，mtime 永远是新的 → 05:00 每天都被跳过 → 会话涨到 3.7MB，
+      # 单日烧 49 元。改用**会话文件** mtime，并按体积放宽/收紧阈值。
+      SESS=$(ls -t $WS/.dsh/sessions/--root--/*/session.v4.jsonl.zstd 2>/dev/null | head -1)
+      LM=$(stat -c %Y "$SESS" 2>/dev/null)
+      [ -z "$LM" ] && LM=$(stat -c %Y "$WEBLOG" 2>/dev/null)
+      [ -z "$LM" ] && LM=0
+      SZ=$(stat -c %s "$SESS" 2>/dev/null || echo 0)
+      TH=600
+      [ "$SZ" -ge 2000000 ] && TH=300     # 超 2MB：静默 5 分钟就换
+      [ "$SZ" -ge 3500000 ] && TH=1       # 超 3.5MB：不管静默直接换（已到卡死线）
+      log "rotate check: size=${SZ}B quiet=$(( (NOW - LM) / 60 ))m threshold=${TH}s"
+      if [ "$((NOW - LM))" -gt "$TH" ]; then
         rotate_session
         echo "$D" > "$ROT_STATE"
         log "daily rotate (quiet $(( (NOW - LM) / 60 ))m) -> new session"

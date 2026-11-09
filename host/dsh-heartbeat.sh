@@ -39,6 +39,14 @@ PLAY_FROM_WEEKEND=8
 PLAY_MAX_EXTRA=2   # 10-25 16:45 从 4 降到 2：续敲是单轮最贵的部分，砍一半
 PLAY_GAP=120       # 续敲间隔 120 秒（原 5 分钟太稀，中间死寂像"玩一下就停"）
 
+# 2026-11-09：QQ 桥断了还继续戳她 = 白烧钱（当天实测 690M tokens / 49 元，回复全发不出去）
+# 判据：日志里最后一次 OneBot 事件是 connected 才算通
+WEBLOG_LOG=${WEBLOG:-/data/data/dsh.android.client/files/linux/ubuntu/root/dsh-web.log}
+bridge_up() {
+  L=$(tail -n 200 "$WEBLOG_LOG" 2>/dev/null | grep -E "OneBot connected|forward WS error" | tail -1)
+  case "$L" in *"OneBot connected"*) return 0 ;; *) return 1 ;; esac
+}
+
 log() { echo "$(date '+%F %T') $*" >> $LOG; }
 
 log "heartbeat scheduler started (weekday chat=$CAP_CHAT_WEEKDAY play=$CAP_PLAY_WEEKDAY | weekend chat=$CAP_CHAT_WEEKEND play=$CAP_PLAY_WEEKEND | idle=${IDLE_MIN}m spend_cap=${QUIET_SPEND}(0=off) interval_weekday=40-46m interval_weekend=43-49m play_from=weekday${PLAY_FROM_WEEKDAY}h/weekend${PLAY_FROM_WEEKEND}h qzone_nudge=1/day@20h leisure=+${PLAY_MAX_EXTRA}x${PLAY_GAP}s)"
@@ -104,6 +112,7 @@ while true; do
   [ "$AWAKE" = 1 ] || { log "skip quiet_hour($HM dow=$DOW)"; rm -f "$PLAY_SESS"; continue; }
 
   ss -lntp 2>/dev/null | grep -q ':38571' || { log "skip dsh_down"; continue; }
+  bridge_up || { log "skip bridge_down"; continue; }
 
   # 今天她花掉的钱（余额差分，由 dsh-budget.sh 维护），超过阈值就闭嘴
   SPENT=$(sed -n 's/.*spent=\([0-9.]*\).*/\1/p' "$BUDGET_LAST" 2>/dev/null | head -1)

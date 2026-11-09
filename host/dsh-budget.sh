@@ -76,11 +76,15 @@ while true; do
     set -- $(cat $STATE 2>/dev/null)
     SDATE=$1
     SBASE=$2
+    SSPENT=${3:-0}
+    SLAST=${4:-$2}
 
     # 跨天：重置基准，清掉昨天的提醒
     if [ "$SDATE" != "$TODAY" ]; then
       SDATE=$TODAY
       SBASE=$BAL
+      SSPENT=0
+      SLAST=$BAL
       rm -f $ALARM
       log "day rollover, baseline=$BAL"
     fi
@@ -94,7 +98,13 @@ while true; do
       fi
     fi
 
-    SPENT=$(awk "BEGIN{printf \"%.4f\", $SBASE - $BAL}")
+    # 只累加余额下降；余额上升视为充值（否则算成负消费，阈值永远不触发）
+    SSPENT=$(awk "BEGIN{d=$SLAST-$BAL; s=$SSPENT; if(d>0) s+=d; printf \"%.4f\", s}")
+    if awk "BEGIN{exit !($BAL > $SLAST)}"; then
+      log "topup/refund: $SLAST -> $BAL (accumulated spend stays $SSPENT)"
+    fi
+    SLAST=$BAL
+    SPENT=$SSPENT
     echo "$TODAY base=$SBASE now=$BAL spent=$SPENT" > $LAST
     {
       echo "日期：$TODAY"
@@ -126,7 +136,7 @@ while true; do
       fi
     fi
 
-    echo "$SDATE $SBASE" > $STATE
+    echo "$SDATE $SBASE $SSPENT $SLAST" > $STATE
   else
     log "balance fetch failed"
   fi
