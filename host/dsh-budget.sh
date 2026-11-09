@@ -54,7 +54,7 @@ load_limits() {
 
 get_balance() {
   KEY=$(grep -o 'sk-[0-9a-zA-Z]\{20,\}' "$CRED" 2>/dev/null | head -1)
-  [ -z "$KEY" ] && KEY="sk-3bcb886ece5e48cfa7ea7cffb2002b6d"
+  # 安全：绝不硬编码 key，只从凭据文件读
   curl -s -m 20 --retry 1 https://api.deepseek.com/user/balance \
     -H "Authorization: Bearer $KEY" 2>/dev/null \
     | grep -o '"total_balance":"[0-9.]*"' | head -1 | cut -d'"' -f4

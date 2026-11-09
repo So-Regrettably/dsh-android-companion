@@ -20,3 +20,8 @@ node_modules/
 backups/
 *.tar.gz
 *.zst
+
+# 安全：绝不允许提交凭据
+.credentials.yaml
+*_key.conf
+*.key
