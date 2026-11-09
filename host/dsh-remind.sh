@@ -97,9 +97,12 @@ restart_dsh() {
   input keyevent 224 2>/dev/null
   am start -n dsh.android.client/com.deepseekharness.app.ui.MainActivity >/dev/null 2>&1
   sleep 8
-  input tap 540 1265 2>/dev/null
-  sleep 2
-  sleep 30
+  ACT=$(dumpsys activity activities 2>/dev/null | grep topResumedActivity | head -1)
+  case "$ACT" in
+    *StartupRecoveryActivity*) input tap 540 1265 ;;
+    *MainActivity*) input tap 540 673 ;;
+  esac
+  sleep 32
 }
 
 cpu_busy() {
@@ -294,7 +297,11 @@ while true; do
       # 2026-11-09 修：原来用 dsh-web.log 的 mtime 当'静默'判据，但桥断了会每几秒刷
       # "forward WS error"，mtime 永远是新的 → 05:00 每天都被跳过 → 会话涨到 3.7MB，
       # 单日烧 49 元。改用**会话文件** mtime，并按体积放宽/收紧阈值。
-      SESS=$(ls -t $WS/.dsh/sessions/--root--/*/session.v4.jsonl.zstd 2>/dev/null | head -1)
+      # 只认当前映射表指向的会话；归档目录(old-*)一律不参与
+      SID=$(sed -n 's/.*"private:[0-9]*": *"\([^"]*\)".*/\1/p' $WS/.dsh/media/onebot/chat-sessions.json 2>/dev/null | head -1)
+      SESS=""
+      [ -n "$SID" ] && SESS="$WS/.dsh/sessions/--root--/$SID/session.v4.jsonl.zstd"
+      [ -f "$SESS" ] || SESS=$(ls -t $WS/.dsh/sessions/--root--/onebot-*/session.v4.jsonl.zstd 2>/dev/null | head -1)
       LM=$(stat -c %Y "$SESS" 2>/dev/null)
       [ -z "$LM" ] && LM=$(stat -c %Y "$WEBLOG" 2>/dev/null)
       [ -z "$LM" ] && LM=0
@@ -312,6 +319,28 @@ while true; do
         echo "0 0" > "$STUCK_STATE"
       else
         log "daily rotate skipped: active $(( (NOW - LM) / 60 ))m ago"
+      fi
+    fi
+  fi
+
+  # ── 补换会话：05:00 那次没换成（当时 DSH 挂着或在聊天），08:00-11:00 补一次 ──
+  # 只补「会话已明显变大且静默够久」的情况，避免在她聊天时突然被换掉
+  if [ "$HH" -ge 8 ] && [ "$HH" -le 11 ] && [ "$(cat "$ROT_STATE" 2>/dev/null)" != "$D" ]; then
+    if [ ! -f /data/adb/budget/BRAKE ] && ss -lntp 2>/dev/null | grep -q ':38571'; then
+      SID=$(sed -n 's/.*"private:[0-9]*": *"\([^"]*\)".*/\1/p' $WS/.dsh/media/onebot/chat-sessions.json 2>/dev/null | head -1)
+      SESS=""
+      [ -n "$SID" ] && SESS="$WS/.dsh/sessions/--root--/$SID/session.v4.jsonl.zstd"
+      [ -f "$SESS" ] || SESS=$(ls -t $WS/.dsh/sessions/--root--/onebot-*/session.v4.jsonl.zstd 2>/dev/null | head -1)
+      LM=$(stat -c %Y "$SESS" 2>/dev/null)
+      [ -z "$LM" ] && LM=$(stat -c %Y "$WEBLOG" 2>/dev/null)
+      [ -z "$LM" ] && LM=0
+      SZ=$(stat -c %s "$SESS" 2>/dev/null || echo 0)
+      if [ "$((NOW - LM))" -gt 1200 ] && [ "$SZ" -ge 1500000 ]; then
+        rotate_session
+        echo "$D" > "$ROT_STATE"
+        log "catch-up rotate (size=${SZ}B quiet=$(( (NOW - LM) / 60 ))m) -> new session"
+        restart_dsh
+        echo "0 0" > "$STUCK_STATE"
       fi
     fi
   fi
