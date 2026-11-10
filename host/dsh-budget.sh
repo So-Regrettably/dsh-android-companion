@@ -70,6 +70,25 @@ while true; do
   HOUR=$(date +%H | sed 's/^0//')
   [ -z "$HOUR" ] && HOUR=0
   load_limits
+
+  # ── 2026-11-10：优先用「本地计量」判额度 ──────────────────────────
+  # 账户余额是账号级的，工作 API 也扣同一个余额，会误伤她的预算。
+  # hercost.mjs 直接解析她自己的会话 usage，只算她花的钱。文件由
+  # /data/adb/dsh-hercost.sh 每 10 分钟刷新；超 30 分钟没更新就退回余额法。
+  HERFILE=/data/adb/budget/her-cost
+  LOCAL_OK=0
+  LOCAL_SPENT=""
+  if [ -f "$HERFILE" ]; then
+    HDATE=$(sed -n 's/.*"date":"\([0-9-]*\)".*/\1/p' "$HERFILE" 2>/dev/null)
+    HCOST=$(sed -n 's/.*"cost":\([0-9.]*\).*/\1/p' "$HERFILE" 2>/dev/null)
+    HTS=$(sed -n 's/.*"ts":\([0-9]*\).*/\1/p' "$HERFILE" 2>/dev/null)
+    NOWS=$(date +%s)
+    if [ "$HDATE" = "$TODAY" ] && [ -n "$HCOST" ] && [ -n "$HTS" ] && [ $((NOWS - HTS)) -lt 1800 ]; then
+      LOCAL_OK=1
+      LOCAL_SPENT=$HCOST
+    fi
+  fi
+
   BAL=$(get_balance)
 
   if [ -n "$BAL" ]; then
@@ -105,10 +124,15 @@ while true; do
     fi
     SLAST=$BAL
     SPENT=$SSPENT
-    echo "$TODAY base=$SBASE now=$BAL spent=$SPENT" > $LAST
+    SRC=balance
+    if [ "$LOCAL_OK" = "1" ]; then
+      SPENT=$LOCAL_SPENT
+      SRC=local
+    fi
+    echo "$TODAY base=$SBASE now=$BAL spent=$SPENT src=$SRC" > $LAST
     {
       echo "日期：$TODAY"
-      echo "今日已花：$SPENT 元"
+      echo "今日已花：$SPENT 元（来源：$SRC）"
       echo "预算线：$STOP 元（到 $WARN 元先提醒管理员，到 $STOP 元会被强制停机）"
       echo "余额：$BAL 元"
       [ -f $ALARM ] && echo "状态：已经花到 $WARN 元，离 $STOP 元停机线只剩一点，跟他说一声，让他决定还玩不玩"

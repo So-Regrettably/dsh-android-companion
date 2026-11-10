@@ -16,7 +16,7 @@
 │  ┌── 宿主机（root）──────────────┐   ┌── proot 容器 ────────────┐  │
 │  │                               │   │                          │  │
 │  │  Magisk + service.d           │   │  Ubuntu rootfs           │  │
-│  │    17 个守护脚本              │   │    ├── dsh web (:38571)   │  │
+│  │    18 个守护脚本              │   │    ├── dsh web (:38571)   │  │
 │  │      ├ dsh-heal    端口自愈   │   │    ├── 插件 dsh-onebot   │  │
 │  │      ├ dsh-remind  提醒/看门狗│   │    ├── /root/say  (TTS)  │  │
 │  │      ├ dsh-budget  预算熔断   │   │    ├── /root/stt.py(STT) │  │
@@ -186,6 +186,7 @@ uiautomator dump → 解析 XML → 每个可点控件带 text / resource-id / b
 │   ├── dsh-douyin-watch.sh    抖音省电回桌面
 │   ├── night-screen.sh        亮灭/静音/亮度
 │   ├── dsh-proxy.sh           mihomo 代理常驻（仅本机 7897）
+│   ├── dsh-hercost.sh         本地计费（只算她自己的 token）
 │   ├── dsh-maintenance.sh     自愈 / 备份 / 轮转 / 宿主快照
 │   └── service.d/             启动挂载
 ├── container/                 proot 容器内的工具
