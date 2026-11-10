@@ -1,17 +1,25 @@
 #!/system/bin/sh
 # DSH 守护（新版 dsh.android.client）
-# 判据（2026-11-10 加）：**38571 和 3090 都要在**。
-#   - 38571 = DSH 本体
-#   - 3090  = App 的设备桥（工具调用 / 原生确认都走它）
-#   只起 38571 不起 3090 的实例没意义：能聊天，但所有工具都报
-#   DSHA_NATIVE_CONSENT_UNAVAILABLE / QUERY_FAILED。
-#   这种状态通常是 root 兜底（dsh-start.sh）留下的孤儿 node 占着端口，
-#   必须先杀掉它，再让 App 自己拉起来。
-# 绝不用 root 起 proot（会污染 SELinux context，而且没有设备桥）。
+#
+# 判据：**38571（本体）和 3090（App 设备桥）都要在**。
+#   只有 38571 没有 3090 = 孤儿实例（root 兜底起的），能聊天但所有工具
+#   都报 DSHA_NATIVE_CONSENT_UNAVAILABLE / QUERY_FAILED，必须杀掉重来。
+#
+# 2026-11-10 加固：
+#   1) /data/adb/dsh.busy —— 别的守护（remind 换会话）正在操作时跳过，避免互相打架
+#   2) 只在「3090 单独缺失」时先等 20 秒复核，避免 App 启动瞬间误判被强停
+#   3) 连续失败退避：连挂 5 次后歇 15 分钟，别每 2 分钟 force-stop 折腾电池
 LOG=/data/adb/dsh-heal.log
-MISSF=/data/adb/.heal-miss
+BUSY=/data/adb/dsh.busy
+FAILS=0
 
 port_up() { ss -lnt 2>/dev/null | grep -q ":$1"; }
+
+busy_now() {
+  [ -f "$BUSY" ] || return 1
+  T=$(stat -c %Y "$BUSY" 2>/dev/null || echo 0)
+  [ $(( $(date +%s) - T )) -lt 300 ]
+}
 
 wait_up() {
   i=0
@@ -22,7 +30,7 @@ wait_up() {
   return 1
 }
 
-# 按钮位置会变（实测 673 / 833），按页面给候选，点一个验一次端口
+# 按钮位置会变（实测 673 / 833 / 1265），按页面给候选，点一个验一次
 click_start() {
   ACT=$(dumpsys activity activities 2>/dev/null | grep topResumedActivity | head -1)
   case "$ACT" in
@@ -53,27 +61,28 @@ while true; do
     continue
   fi
 
+  # 别的守护正在操作（换会话等），让开
+  if busy_now; then
+    sleep 60
+    continue
+  fi
+
   NEED=0
   WHY=""
   if ! port_up 38571; then NEED=1; WHY="38571 down"; fi
-  if ! port_up 3090;  then NEED=1; WHY="${WHY:+$WHY+}3090 down"; fi
-
-  if [ "$NEED" = "0" ]; then
-    echo 0 > $MISSF 2>/dev/null
+  if ! port_up 3090; then
+    if [ "$NEED" = "0" ]; then
+      # 只有桥没了：先等 20 秒复核，排除 App 刚启动的瞬间
+      sleep 20
+      port_up 3090 || { NEED=1; WHY="3090 down"; }
+    else
+      WHY="$WHY+3090 down"
+    fi
   fi
 
-  # 迟滞：连续 2 次（≥4 分钟）都异常才动手，避免 App/桥短暂重启时误杀健康的 DSH
   if [ "$NEED" = "1" ]; then
-    MISS=$(cat $MISSF 2>/dev/null || echo 0)
-    case "$MISS" in ""|*[!0-9]*) MISS=0 ;; esac
-    MISS=$((MISS + 1))
-    echo $MISS > $MISSF
-    echo "$(date +%F' '%T) need restart ($WHY, miss=$MISS)" >> $LOG
-    if [ "$MISS" -lt 2 ]; then
-      sleep 120
-      continue
-    fi
-    echo 0 > $MISSF
+    echo "$(date +%F' '%T) need restart ($WHY) fails=$FAILS" >> $LOG
+    touch "$BUSY"
 
     # 孤儿：38571 有人占着但设备桥没了 → root 兜底起的旧实例，先清掉
     if port_up 38571; then
@@ -115,13 +124,25 @@ while true; do
       click_start
     fi
 
+    rm -f "$BUSY"
+
     if port_up 38571 && port_up 3090; then
-      echo 0 > $MISSF 2>/dev/null
       echo "$(date +%F' '%T) recovered (38571+3090)" >> $LOG
+      FAILS=0
     elif port_up 38571; then
-      echo "$(date +%F' '%T) dsh up but NO bridge (3090), will retry" >> $LOG
+      FAILS=$((FAILS+1))
+      echo "$(date +%F' '%T) dsh up but NO bridge (3090), fails=$FAILS" >> $LOG
     else
-      echo "$(date +%F' '%T) still down, will retry next cycle" >> $LOG
+      FAILS=$((FAILS+1))
+      echo "$(date +%F' '%T) still down, fails=$FAILS" >> $LOG
+    fi
+
+    # 连续失败退避，别一直折腾
+    if [ "$FAILS" -ge 5 ]; then
+      echo "$(date +%F' '%T) failed $FAILS times, backoff 15min" >> $LOG
+      sleep 900
+      FAILS=0
+      continue
     fi
   fi
   sleep 120

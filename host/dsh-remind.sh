@@ -95,6 +95,8 @@ rotate_session() {
 }
 
 restart_dsh() {
+  # 标记「正在操作」，heal 看到会在 5 分钟内让开，避免两边同时 force-stop
+  touch /data/adb/dsh.busy 2>/dev/null
   rm -f "$WS/.dsha-stopped"
   input keyevent 224 2>/dev/null
   am start -n dsh.android.client/com.deepseekharness.app.ui.MainActivity >/dev/null 2>&1
@@ -109,6 +111,7 @@ restart_dsh() {
     done
   done
   sleep 5
+  rm -f /data/adb/dsh.busy 2>/dev/null
 }
 
 cpu_busy() {

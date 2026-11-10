@@ -132,11 +132,6 @@ let all = [];
 for (const f of files) {
   try { all = all.concat(parseFile(f)); } catch { /* ignore */ }
 }
-// 剪枝：只保留仍然存在的文件，避免缓存无限增长
-for (const k of Object.keys(nextCache)) {
-  if (!fs.existsSync(k)) delete nextCache[k];
-  else if (nextCache[k].rows && nextCache[k].rows.length > 20000) nextCache[k].rows = nextCache[k].rows.slice(-20000);
-}
 try { fs.writeFileSync(CACHE_FILE, JSON.stringify(nextCache)); } catch { /* ignore */ }
 
 const byDay = {};
@@ -167,12 +162,20 @@ if (wantJson) {
 }
 
 if (wantWrite) {
+  // 一个会话文件都没读到 → 绝不写 0。
+  // 否则预算脚本会以为她今天没花钱，熔断形同虚设（2026-11-10 修）
+  if (files.length === 0) {
+    console.error('no session files found, skip write');
+    process.exit(2);
+  }
   try {
     fs.mkdirSync('/data/adb/budget', { recursive: true });
     fs.writeFileSync(OUT_FILE, JSON.stringify({
       date: todayBj,
       cost: +today.cost.toFixed(4),
       calls: today.calls,
+      ok: true,
+      files: files.length,
       ts: Date.now(),
     }) + '\n');
   } catch (e) { console.error('write failed:', e.message); }

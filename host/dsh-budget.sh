@@ -12,7 +12,6 @@ LEDGER=/data/data/dsh.android.client/files/linux/ubuntu/root/budget.txt
 DIR=/data/adb/budget
 LOG=$DIR/log
 STATE=$DIR/state
-SRCF=$DIR/src      # 上次用的是哪种算法（local / balance）
 LAST=$DIR/last
 ALARM=$DIR/ALARM
 BRAKE=$DIR/BRAKE
@@ -83,8 +82,10 @@ while true; do
     HDATE=$(sed -n 's/.*"date":"\([0-9-]*\)".*/\1/p' "$HERFILE" 2>/dev/null)
     HCOST=$(sed -n 's/.*"cost":\([0-9.]*\).*/\1/p' "$HERFILE" 2>/dev/null)
     HTS=$(sed -n 's/.*"ts":\([0-9]*\).*/\1/p' "$HERFILE" 2>/dev/null)
+    HOK=$(sed -n 's/.*"ok":\([a-z]*\).*/\1/p' "$HERFILE" 2>/dev/null)
     NOWS=$(date +%s)
-    if [ "$HDATE" = "$TODAY" ] && [ -n "$HCOST" ] && [ -n "$HTS" ] && [ $((NOWS - HTS)) -lt 1800 ]; then
+    # 必须 ok=true：读不到会话文件时 hercost 不写 0，避免熔断被绕过
+    if [ "$HDATE" = "$TODAY" ] && [ "$HOK" = "true" ] && [ -n "$HCOST" ] && [ -n "$HTS" ] && [ $((NOWS - HTS)) -lt 1800 ]; then
       LOCAL_OK=1
       LOCAL_SPENT=$HCOST
     fi
@@ -124,29 +125,19 @@ while true; do
       log "topup/refund: $SLAST -> $BAL (accumulated spend stays $SSPENT)"
     fi
     SLAST=$BAL
-    PREVSRC=$(cat $SRCF 2>/dev/null)
+    SPENT=$SSPENT
     SRC=balance
     if [ "$LOCAL_OK" = "1" ]; then
-      SRC=local
-      # 本地计量期间把余额累加器同步成她的真实花费，
-      # 否则余额累加器会一直涨（工作号的消耗），一旦回退就瞬间误熔断
-      SSPENT=$LOCAL_SPENT
       SPENT=$LOCAL_SPENT
-    else
-      # 从本地计量回退：重置累加器，只统计这之后的余额下降
-      if [ "$PREVSRC" = "local" ]; then
-        SSPENT=0
-        log "fallback to balance mode: accumulator reset (her-cost stale)"
-      fi
-      SPENT=$SSPENT
+      SRC=local
     fi
-    echo "$SRC" > $SRCF
     echo "$TODAY base=$SBASE now=$BAL spent=$SPENT src=$SRC" > $LAST
     {
       echo "日期：$TODAY"
       echo "今日已花：$SPENT 元（来源：$SRC）"
       echo "预算线：$STOP 元（到 $WARN 元先提醒管理员，到 $STOP 元会被强制停机）"
       echo "余额：$BAL 元"
+      awk "BEGIN{exit !($BAL < 2)}" 2>/dev/null && echo "提示：账户余额低于 2 元（工作号也在花同一份余额），建议充值"
       [ -f $ALARM ] && echo "状态：已经花到 $WARN 元，离 $STOP 元停机线只剩一点，跟他说一声，让他决定还玩不玩"
       [ -f $BRAKE ] && echo "状态：已熔断停机"
     } > $LEDGER
