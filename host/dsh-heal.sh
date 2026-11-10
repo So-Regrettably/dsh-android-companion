@@ -9,6 +9,7 @@
 #   必须先杀掉它，再让 App 自己拉起来。
 # 绝不用 root 起 proot（会污染 SELinux context，而且没有设备桥）。
 LOG=/data/adb/dsh-heal.log
+MISSF=/data/adb/.heal-miss
 
 port_up() { ss -lnt 2>/dev/null | grep -q ":$1"; }
 
@@ -57,8 +58,22 @@ while true; do
   if ! port_up 38571; then NEED=1; WHY="38571 down"; fi
   if ! port_up 3090;  then NEED=1; WHY="${WHY:+$WHY+}3090 down"; fi
 
+  if [ "$NEED" = "0" ]; then
+    echo 0 > $MISSF 2>/dev/null
+  fi
+
+  # 迟滞：连续 2 次（≥4 分钟）都异常才动手，避免 App/桥短暂重启时误杀健康的 DSH
   if [ "$NEED" = "1" ]; then
-    echo "$(date +%F' '%T) need restart ($WHY)" >> $LOG
+    MISS=$(cat $MISSF 2>/dev/null || echo 0)
+    case "$MISS" in ""|*[!0-9]*) MISS=0 ;; esac
+    MISS=$((MISS + 1))
+    echo $MISS > $MISSF
+    echo "$(date +%F' '%T) need restart ($WHY, miss=$MISS)" >> $LOG
+    if [ "$MISS" -lt 2 ]; then
+      sleep 120
+      continue
+    fi
+    echo 0 > $MISSF
 
     # 孤儿：38571 有人占着但设备桥没了 → root 兜底起的旧实例，先清掉
     if port_up 38571; then
@@ -101,6 +116,7 @@ while true; do
     fi
 
     if port_up 38571 && port_up 3090; then
+      echo 0 > $MISSF 2>/dev/null
       echo "$(date +%F' '%T) recovered (38571+3090)" >> $LOG
     elif port_up 38571; then
       echo "$(date +%F' '%T) dsh up but NO bridge (3090), will retry" >> $LOG

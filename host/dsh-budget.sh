@@ -12,6 +12,7 @@ LEDGER=/data/data/dsh.android.client/files/linux/ubuntu/root/budget.txt
 DIR=/data/adb/budget
 LOG=$DIR/log
 STATE=$DIR/state
+SRCF=$DIR/src      # 上次用的是哪种算法（local / balance）
 LAST=$DIR/last
 ALARM=$DIR/ALARM
 BRAKE=$DIR/BRAKE
@@ -123,12 +124,23 @@ while true; do
       log "topup/refund: $SLAST -> $BAL (accumulated spend stays $SSPENT)"
     fi
     SLAST=$BAL
-    SPENT=$SSPENT
+    PREVSRC=$(cat $SRCF 2>/dev/null)
     SRC=balance
     if [ "$LOCAL_OK" = "1" ]; then
-      SPENT=$LOCAL_SPENT
       SRC=local
+      # 本地计量期间把余额累加器同步成她的真实花费，
+      # 否则余额累加器会一直涨（工作号的消耗），一旦回退就瞬间误熔断
+      SSPENT=$LOCAL_SPENT
+      SPENT=$LOCAL_SPENT
+    else
+      # 从本地计量回退：重置累加器，只统计这之后的余额下降
+      if [ "$PREVSRC" = "local" ]; then
+        SSPENT=0
+        log "fallback to balance mode: accumulator reset (her-cost stale)"
+      fi
+      SPENT=$SSPENT
     fi
+    echo "$SRC" > $SRCF
     echo "$TODAY base=$SBASE now=$BAL spent=$SPENT src=$SRC" > $LAST
     {
       echo "日期：$TODAY"
