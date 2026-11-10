@@ -1,25 +1,27 @@
 #!/system/bin/sh
-# DSH 守护（新版 dsh.android.client）：每 2 分钟看 38571，挂了依次尝试：
-#   1) 唤起 App
-#   2) 若停在「启动恢复」页 → 点「重试启动」(540,1265)
-#      若停在主界面 → 点「启动 DSHA」(540,673)
-#   3) 等 90 秒
-#   4) 仍不行 → force-stop 重开 App，再按页面点对应按钮
-# 绝不用 root 起 proot（会污染 SELinux context 导致 EACCES）
+# DSH 守护（新版 dsh.android.client）
+# 判据（2026-11-10 加）：**38571 和 3090 都要在**。
+#   - 38571 = DSH 本体
+#   - 3090  = App 的设备桥（工具调用 / 原生确认都走它）
+#   只起 38571 不起 3090 的实例没意义：能聊天，但所有工具都报
+#   DSHA_NATIVE_CONSENT_UNAVAILABLE / QUERY_FAILED。
+#   这种状态通常是 root 兜底（dsh-start.sh）留下的孤儿 node 占着端口，
+#   必须先杀掉它，再让 App 自己拉起来。
+# 绝不用 root 起 proot（会污染 SELinux context，而且没有设备桥）。
 LOG=/data/adb/dsh-heal.log
 
-# 按当前页面点启动按钮；返回 0=点了 1=没匹配到可点的按钮
+port_up() { ss -lnt 2>/dev/null | grep -q ":$1"; }
+
 wait_up() {
   i=0
   while [ "$i" -lt "${1:-6}" ]; do
     sleep 3; i=$((i+1))
-    ss -lnt 2>/dev/null | grep -q ':38571' && return 0
+    port_up 38571 && return 0
   done
   return 1
 }
 
-# 2026-11-09：按钮位置会变（实测 673 -> 833），不能硬编码单个坐标。
-# 按页面给一串候选 y，点一个等一会儿验端口，没起来再点下一个。
+# 按钮位置会变（实测 673 / 833），按页面给候选，点一个验一次端口
 click_start() {
   ACT=$(dumpsys activity activities 2>/dev/null | grep topResumedActivity | head -1)
   case "$ACT" in
@@ -50,10 +52,27 @@ while true; do
     continue
   fi
 
-  if ! ss -lnt 2>/dev/null | grep -q ':38571'; then
-    echo "$(date +%F' '%T) dsh down, try app first" >> $LOG
+  NEED=0
+  WHY=""
+  if ! port_up 38571; then NEED=1; WHY="38571 down"; fi
+  if ! port_up 3090;  then NEED=1; WHY="${WHY:+$WHY+}3090 down"; fi
 
-    input keyevent 224 >/dev/null 2>&1   # 唤醒屏幕（夜间息屏时否则 App 起不来）
+  if [ "$NEED" = "1" ]; then
+    echo "$(date +%F' '%T) need restart ($WHY)" >> $LOG
+
+    # 孤儿：38571 有人占着但设备桥没了 → root 兜底起的旧实例，先清掉
+    if port_up 38571; then
+      ORPH=$(ss -lntp 2>/dev/null | awk '/:38571/{print $NF}' | grep -o 'pid=[0-9]*' | cut -d= -f2 | head -1)
+      if [ -n "$ORPH" ]; then
+        echo "$(date +%F' '%T) killing orphan dsh pid=$ORPH (no bridge)" >> $LOG
+        kill -9 "$ORPH" 2>/dev/null
+        sleep 3
+      fi
+      am force-stop dsh.android.client 2>/dev/null
+      sleep 3
+    fi
+
+    input keyevent 224 >/dev/null 2>&1   # 夜间息屏时否则 App 起不来
     wm dismiss-keyguard >/dev/null 2>&1
     sleep 2
     am start -n dsh.android.client/com.deepseekharness.app.ui.MainActivity >/dev/null 2>&1
@@ -65,11 +84,11 @@ while true; do
     while [ $i -lt 18 ]; do
       sleep 5
       i=$((i+1))
-      ss -lnt 2>/dev/null | grep -q ':38571' && break
+      port_up 38571 && port_up 3090 && break
     done
 
-    # 还没起来：force-stop 重开，再点一次
-    if ! ss -lnt 2>/dev/null | grep -q ':38571'; then
+    # 还没齐：force-stop 重开，再点一次
+    if ! port_up 38571 || ! port_up 3090; then
       echo "$(date +%F' '%T) app retry failed, force-stop and reopen" >> $LOG
       am force-stop dsh.android.client 2>/dev/null
       sleep 4
@@ -81,8 +100,10 @@ while true; do
       click_start
     fi
 
-    if ss -lnt 2>/dev/null | grep -q ':38571'; then
-      echo "$(date +%F' '%T) recovered" >> $LOG
+    if port_up 38571 && port_up 3090; then
+      echo "$(date +%F' '%T) recovered (38571+3090)" >> $LOG
+    elif port_up 38571; then
+      echo "$(date +%F' '%T) dsh up but NO bridge (3090), will retry" >> $LOG
     else
       echo "$(date +%F' '%T) still down, will retry next cycle" >> $LOG
     fi
